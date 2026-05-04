@@ -57,7 +57,7 @@ To disconnect: visit `https://your-app.vercel.app/deletewebhook`.
 | File | Description |
 |---|---|
 | `bot.py` | Telegram bot logic — button menu, checkers, channel posting |
-| `vercel_app.py` | Flask webhook handler for Vercel deployment |
+| `app.py` | Flask webhook handler for Vercel deployment |
 | `vercel.json` | Vercel routing config |
 | `Test.py` | CLI entry-point with checker and site menus |
 | `api.py` | Gateway API helpers (`process_card`, `parse_cc_string`, etc.) |
