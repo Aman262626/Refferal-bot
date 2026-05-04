@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "5451167865"))
 
 TEST_CARDS = [
     "5275150060415544|05|27|803",
@@ -195,9 +196,20 @@ def build_result_text(cc_string, category, clean, price_fmt, info_str, bank, cou
     return text
 
 
+def admin_only(func):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            await update.message.reply_text("⛔ Access denied. Admin only.")
+            return
+        return await func(update, context)
+    return wrapper
+
+
 # ─── Bot Commands ───────────────────────────────────────────
 
 
+@admin_only
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("𝐂𝐡𝐞𝐜𝐤𝐞𝐫 🔍", callback_data="menu_checker"),
@@ -217,6 +229,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@admin_only
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "<b>𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬:</b>\n\n"
@@ -235,6 +248,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await (update.message or update.callback_query.message).reply_text(text, parse_mode="HTML")
 
 
+@admin_only
 async def chk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text(
@@ -284,6 +298,7 @@ async def chk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to post to channel: {e}")
 
 
+@admin_only
 async def mass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or len(context.args) < 1:
         await update.message.reply_text(
@@ -388,6 +403,7 @@ async def mass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Channel summary error: {e}")
 
 
+@admin_only
 async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
@@ -415,6 +431,7 @@ async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"❌ <b>DEAD</b> ➜ <code>{site}</code>", parse_mode="HTML")
 
 
+@admin_only
 async def msite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sites = []
 
@@ -480,6 +497,7 @@ async def msite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@admin_only
 async def bin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
@@ -504,6 +522,7 @@ async def bin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
+@admin_only
 async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if not doc or not doc.file_name.endswith('.txt'):
