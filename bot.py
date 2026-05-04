@@ -273,6 +273,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "btn_back":
+        context.user_data['awaiting'] = None
         await show_menu(query, context)
         return
 
@@ -330,6 +331,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "btn_help":
+        context.user_data['awaiting'] = None
         await query.edit_message_text(
             "<b>𝐇𝐞𝐥𝐩 ❓</b>\n\n"
             "🔍 <b>Single Check</b> - Check one card against a site\n"
@@ -668,14 +670,17 @@ async def handle_bin_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 # ─── Main ──────────────────────────────────────────────────
 
 
-def main():
+def build_app():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CallbackQueryHandler(button_router))
     app.add_handler(MessageHandler(filters.Document.ALL, file_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    return app
 
+
+def main():
+    app = build_app()
     logger.info("Bot started polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
