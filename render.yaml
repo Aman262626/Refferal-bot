@@ -1,0 +1,13 @@
+services:
+  - type: worker
+    name: refferal-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.6"
