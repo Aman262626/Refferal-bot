@@ -19,8 +19,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8401689004:AAEvNNZQJCoVh6UMwUGrKOUynDPd-1rsPAk")
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003345433105"))
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 
 TEST_CARDS = [
     "5275150060415544|05|27|803",
