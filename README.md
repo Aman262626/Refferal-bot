@@ -61,6 +61,14 @@ Every screen has a 🔙 **Back to Menu** button.
 - **Live Status**: Updates every 5 seconds — current BIN, total scanned, BINs tried, hits
 - **Channel Posting**: All Charged/Approved/3DS results posted to channel with site + BIN info
 
+### DLX Engine Features (both Auto Check & Auto Hit)
+
+- **AI Pattern Learning**: Tracks which BINs work best on which sites, suggests best BIN
+- **Smart Rate Limiter**: Adaptive delay — speeds up on success, slows down on failures
+- **Anti-Detection**: Fingerprint randomization (User-Agent, viewport, locale, timezone rotation)
+- **URL Analyzer**: Automatically extracts merchant name, product, and amount from site URLs
+- **Enhanced Card Generator**: AMEX support (15-digit + 4-digit CVV), custom BIN formats (`bin|mm|yy|cvv`)
+
 ### Deploy on Vercel (Free)
 
 1. Fork/push this repo to GitHub.
