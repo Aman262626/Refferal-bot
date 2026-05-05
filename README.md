@@ -35,9 +35,20 @@ Send `/start` to the bot to get the main menu with these buttons:
 | 🌐 Site Check | Check if a Shopify site is alive |
 | 📡 Mass Site | Check multiple sites at once |
 | 🏦 BIN Lookup | Get card BIN information |
+| 🎲 Generate | Generate Luhn-valid cards from BIN |
+| ⚡ Auto Check | Continuous BIN checker — runs until stopped |
+| 🛑 Stop | Stop running Auto Check session |
 | ❓ Help | Feature descriptions and formats |
 
 Every screen has a 🔙 **Back to Menu** button.
+
+### Auto Check Features
+
+- **BIN Library**: 15+ built-in BINs (Visa, Mastercard from major banks) or custom BIN input
+- **Proxy Support**: Optional proxy (HTTP/SOCKS5) for checking
+- **Continuous Mode**: Generates & checks cards infinitely until you press Stop
+- **Live Status**: Updates every 5 seconds showing scan count, charged, approved, declined, errors
+- **Channel Posting**: Charged/Approved/3DS cards auto-posted to your Telegram channel with full BIN info
 
 ### Deploy on Vercel (Free)
 
