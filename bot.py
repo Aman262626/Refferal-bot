@@ -28,24 +28,23 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "5451167865"))
 # ─── Active sessions (user_id → session state) ─────────────
 active_sessions = {}
 
-# ─── BIN Library ───────────────────────────────────────────
-BIN_LIBRARY = [
-    {"bin": "527515", "bank": "CITIBANK", "country": "US", "brand": "MASTERCARD"},
-    {"bin": "414720", "bank": "CHASE", "country": "US", "brand": "VISA"},
-    {"bin": "453201", "bank": "CAPITAL ONE", "country": "US", "brand": "VISA"},
-    {"bin": "540542", "bank": "MBNA", "country": "US", "brand": "MASTERCARD"},
-    {"bin": "489629", "bank": "WELLS FARGO", "country": "US", "brand": "VISA"},
-    {"bin": "437748", "bank": "BARCLAYS", "country": "GB", "brand": "VISA"},
-    {"bin": "512345", "bank": "RBC ROYAL BANK", "country": "CA", "brand": "MASTERCARD"},
-    {"bin": "459504", "bank": "TD BANK", "country": "CA", "brand": "VISA"},
-    {"bin": "431940", "bank": "HSBC", "country": "GB", "brand": "VISA"},
-    {"bin": "542418", "bank": "SANTANDER", "country": "ES", "brand": "MASTERCARD"},
-    {"bin": "450875", "bank": "BANK OF AMERICA", "country": "US", "brand": "VISA"},
-    {"bin": "530127", "bank": "ING BANK", "country": "NL", "brand": "MASTERCARD"},
-    {"bin": "474386", "bank": "DEUTSCHE BANK", "country": "DE", "brand": "VISA"},
-    {"bin": "517805", "bank": "COMMERZBANK", "country": "DE", "brand": "MASTERCARD"},
-    {"bin": "455221", "bank": "BNP PARIBAS", "country": "FR", "brand": "VISA"},
-]
+# ─── BIN Library (loaded from bins_library.json) ───────────
+import json as _json
+
+_BIN_LIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bins_library.json')
+try:
+    with open(_BIN_LIB_PATH, 'r') as _f:
+        BIN_LIBRARY = _json.load(_f)
+except Exception:
+    BIN_LIBRARY = []
+
+# Country index for fast lookup
+BIN_BY_COUNTRY = {}
+for _b in BIN_LIBRARY:
+    BIN_BY_COUNTRY.setdefault(_b['country'], []).append(_b)
+
+# Top countries sorted by BIN count
+TOP_COUNTRIES = sorted(BIN_BY_COUNTRY.keys(), key=lambda c: len(BIN_BY_COUNTRY[c]), reverse=True)
 
 TEST_CARDS = [
     "5275150060415544|05|27|803",
@@ -408,47 +407,124 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "btn_autochk":
-        # Show BIN library + custom BIN option
-        buttons = []
-        for i, b in enumerate(BIN_LIBRARY):
-            buttons.append(InlineKeyboardButton(
-                f"{b['brand']} | {b['bin']} | {b['bank']} ({b['country']})",
-                callback_data=f"abin_{i}",
-            ))
-        kb = [[btn] for btn in buttons]
+        # Show top countries to pick BINs from
+        kb = []
+        for c in TOP_COUNTRIES[:20]:
+            count = len(BIN_BY_COUNTRY[c])
+            short = c[:22]
+            kb.append([InlineKeyboardButton(
+                f"🌍 {short} ({count} BINs)",
+                callback_data=f"acountry_{TOP_COUNTRIES.index(c)}",
+            )])
+        kb.append([InlineKeyboardButton("🔎 𝐒𝐞𝐚𝐫𝐜𝐡 𝐁𝐈𝐍", callback_data="abin_search")])
+        kb.append([InlineKeyboardButton("🎲 𝐑𝐚𝐧𝐝𝐨𝐦 𝐁𝐈𝐍", callback_data="abin_random")])
         kb.append([InlineKeyboardButton("✏️ 𝐂𝐮𝐬𝐭𝐨𝐦 𝐁𝐈𝐍", callback_data="abin_custom")])
         kb.append([InlineKeyboardButton("🔙 𝐁𝐚𝐜𝐤 𝐭𝐨 𝐌𝐞𝐧𝐮", callback_data="btn_back")])
         await query.edit_message_text(
-            "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-            "Select a BIN from the library or enter custom:\n"
+            f"⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            f"📚 BIN Library: <b>{len(BIN_LIBRARY)}</b> BINs from <b>{len(TOP_COUNTRIES)}</b> countries\n\n"
+            "Select country, search, or enter custom BIN:\n"
             "Generates cards and checks continuously until stopped.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(kb),
         )
         return
 
-    if data.startswith("abin_"):
-        idx = data.replace("abin_", "")
-        if idx == "custom":
-            await query.edit_message_text(
-                "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-                "Send your custom BIN (6-16 digits):\n"
-                "Example: <code>527515</code> or <code>527515xxxxxxxxxx</code>",
-                parse_mode="HTML",
-                reply_markup=back_button(),
-            )
-            context.user_data['awaiting'] = 'autochk_bin'
-        else:
-            bin_entry = BIN_LIBRARY[int(idx)]
-            context.user_data['autochk_bin'] = bin_entry['bin']
-            await query.edit_message_text(
-                f"⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-                f"BIN: <code>{bin_entry['bin']}</code> ({bin_entry['brand']} | {bin_entry['bank']})\n\n"
-                "Now send the site URL to check against:",
-                parse_mode="HTML",
-                reply_markup=back_button(),
-            )
-            context.user_data['awaiting'] = 'autochk_site'
+    if data.startswith("acountry_"):
+        idx = int(data.replace("acountry_", ""))
+        country = TOP_COUNTRIES[idx]
+        country_bins = BIN_BY_COUNTRY[country]
+        # Show first 20 BINs from this country
+        kb = []
+        for i, b in enumerate(country_bins[:20]):
+            label = f"{b['brand']} | {b['bin']} | {b['bank'][:18]}"
+            kb.append([InlineKeyboardButton(label, callback_data=f"apick_{b['bin']}")])
+        if len(country_bins) > 20:
+            kb.append([InlineKeyboardButton(
+                f"🎲 Random from {country[:15]} ({len(country_bins)} total)",
+                callback_data=f"arand_{idx}",
+            )])
+        kb.append([InlineKeyboardButton("🔙 𝐁𝐚𝐜𝐤", callback_data="btn_autochk")])
+        await query.edit_message_text(
+            f"⚡ <b>{country}</b> — {len(country_bins)} BINs\n\n"
+            "Select a BIN:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
+        return
+
+    if data.startswith("arand_"):
+        idx = int(data.replace("arand_", ""))
+        country = TOP_COUNTRIES[idx]
+        country_bins = BIN_BY_COUNTRY[country]
+        b = random.choice(country_bins)
+        context.user_data['autochk_bin'] = b['bin']
+        await query.edit_message_text(
+            f"⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            f"🎲 Random BIN: <code>{b['bin']}</code>\n"
+            f"{b['brand']} | {b['bank']} | {b['country']}\n"
+            f"Type: {b['type']} | Level: {b['level']}\n\n"
+            "Now send the site URL to check against:",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_site'
+        return
+
+    if data.startswith("apick_"):
+        bin_num = data.replace("apick_", "")
+        context.user_data['autochk_bin'] = bin_num
+        # Find bin info
+        b = next((x for x in BIN_LIBRARY if x['bin'] == bin_num), None)
+        info_text = f"{b['brand']} | {b['bank']} | {b['country']}" if b else bin_num
+        await query.edit_message_text(
+            f"⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            f"BIN: <code>{bin_num}</code>\n{info_text}\n\n"
+            "Now send the site URL to check against:",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_site'
+        return
+
+    if data == "abin_search":
+        await query.edit_message_text(
+            "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b> — Search\n\n"
+            "Send a search query (country, bank, or BIN digits):\n"
+            "Example: <code>CHASE</code> or <code>INDIA</code> or <code>4147</code>",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_search'
+        return
+
+    if data == "abin_random":
+        b = random.choice(BIN_LIBRARY) if BIN_LIBRARY else None
+        if not b:
+            await query.edit_message_text("BIN library is empty.", reply_markup=main_menu_keyboard())
+            return
+        context.user_data['autochk_bin'] = b['bin']
+        await query.edit_message_text(
+            f"⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            f"🎲 Random BIN: <code>{b['bin']}</code>\n"
+            f"{b['brand']} | {b['bank']} | {b['country']}\n"
+            f"Type: {b['type']} | Level: {b['level']}\n\n"
+            "Now send the site URL to check against:",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_site'
+        return
+
+    if data == "abin_custom":
+        await query.edit_message_text(
+            "⚡ <b>𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
+            "Send your custom BIN (6-16 digits):\n"
+            "Example: <code>527515</code> or <code>527515xxxxxxxxxx</code>",
+            parse_mode="HTML",
+            reply_markup=back_button(),
+        )
+        context.user_data['awaiting'] = 'autochk_bin'
         return
 
     if data == "aproxy_yes":
@@ -500,7 +576,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚡ <b>Auto Check</b> — Continuous BIN checker (button or /autochk)\n"
             "🛑 <b>Stop</b> — /stop to halt running Auto Check\n\n"
             "<b>Auto Check Features:</b>\n"
-            "• BIN Library (15+ built-in BINs) or Custom BIN\n"
+            "• BIN Library (33,000+ BINs from 200+ countries)\n"
+            "• Browse by country, search, or random BIN\n"
             "• Proxy support (optional)\n"
             "• Runs continuously until you press Stop\n"
             "• Live status updates every 5 seconds\n"
@@ -703,7 +780,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛑 /stop — Stop running auto check\n"
         "/start — Show button menu\n\n"
         "<b>Auto Check Features:</b>\n"
-        "• BIN Library (15+ BINs) or Custom\n"
+        "• BIN Library (33,000+ BINs, 200+ countries)\n"
+        "• Browse by country / Search / Random\n"
         "• Optional Proxy support\n"
         "• Runs infinitely until /stop\n"
         "• Live status every 5 sec\n"
@@ -807,6 +885,32 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
         asyncio.create_task(
             run_continuous_autochk(update, context, user_id, msg)
+        )
+
+    elif awaiting == 'autochk_search':
+        context.user_data['awaiting'] = None
+        query_str = text.strip().upper()
+        results = [b for b in BIN_LIBRARY if
+                   query_str in b['bin'] or
+                   query_str in b['country'].upper() or
+                   query_str in b['bank'].upper() or
+                   query_str in b['brand'].upper()][:20]
+        if not results:
+            await update.message.reply_text(
+                f"No BINs found for '<code>{text.strip()}</code>'. Try another search.",
+                parse_mode="HTML", reply_markup=main_menu_keyboard(),
+            )
+            return
+        kb = []
+        for b in results:
+            label = f"{b['brand']} | {b['bin']} | {b['bank'][:15]} ({b['country'][:10]})"
+            kb.append([InlineKeyboardButton(label, callback_data=f"apick_{b['bin']}")])
+        kb.append([InlineKeyboardButton("🔙 𝐁𝐚𝐜𝐤", callback_data="btn_autochk")])
+        await update.message.reply_text(
+            f"🔎 Found <b>{len(results)}</b> BINs for '<code>{text.strip()}</code>':\n"
+            "Select one:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(kb),
         )
 
     elif awaiting == 'autochk_bin':

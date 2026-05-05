@@ -44,7 +44,7 @@ Every screen has a 🔙 **Back to Menu** button.
 
 ### Auto Check Features
 
-- **BIN Library**: 15+ built-in BINs (Visa, Mastercard from major banks) or custom BIN input
+- **BIN Library**: 33,000+ BINs from 200+ countries (browse by country, search, or random)
 - **Proxy Support**: Optional proxy (HTTP/SOCKS5) for checking
 - **Continuous Mode**: Generates & checks cards infinitely until you press Stop
 - **Live Status**: Updates every 5 seconds showing scan count, charged, approved, declined, errors
