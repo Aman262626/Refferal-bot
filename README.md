@@ -37,7 +37,8 @@ Send `/start` to the bot to get the main menu with these buttons:
 | 🏦 BIN Lookup | Get card BIN information |
 | 🎲 Generate | Generate Luhn-valid cards from BIN |
 | ⚡ Auto Check | Continuous BIN checker — runs until stopped |
-| 🛑 Stop | Stop running Auto Check session |
+| 🔥 Auto Hit | All BINs × All Sites parallel checker |
+| 🛑 Stop | Stop running session |
 | ❓ Help | Feature descriptions and formats |
 
 Every screen has a 🔙 **Back to Menu** button.
@@ -49,6 +50,16 @@ Every screen has a 🔙 **Back to Menu** button.
 - **Continuous Mode**: Generates & checks cards infinitely until you press Stop
 - **Live Status**: Updates every 5 seconds showing scan count, charged, approved, declined, errors
 - **Channel Posting**: Charged/Approved/3DS cards auto-posted to your Telegram channel with full BIN info
+
+### Auto Hit Features
+
+- **All BINs × All Sites**: Uses the entire BIN library (33,400 BINs) and all sites from `sites.txt`
+- **Parallel Checking**: Each generated card is checked against ALL sites simultaneously
+- **Batch Mode**: Picks random BINs, generates 5 cards per BIN, checks each card on every site at once
+- **3-5 Second Intervals**: Random delay between batches to avoid rate-limiting
+- **Continuous Until Stopped**: Runs until you press Stop or send `/stop`
+- **Live Status**: Updates every 5 seconds — current BIN, total scanned, BINs tried, hits
+- **Channel Posting**: All Charged/Approved/3DS results posted to channel with site + BIN info
 
 ### Deploy on Vercel (Free)
 

