@@ -8,7 +8,6 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ConversationHandler,
     ContextTypes,
     filters,
 )
@@ -23,9 +22,6 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "5451167865"))
-
-# Conversation states
-WAIT_CHK_INPUT, WAIT_MASS_SITE, WAIT_MASS_CARDS, WAIT_SITE_INPUT, WAIT_BIN_INPUT = range(5)
 
 TEST_CARDS = [
     "5275150060415544|05|27|803",
@@ -282,7 +278,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔍 <b>𝐒𝐢𝐧𝐠𝐥𝐞 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
             "Send card and site in this format:\n"
             "<code>cc|mm|yy|cvv site_url</code>\n\n"
-            "Example:\n<code>4242424242424242|12|28|123 https://example.com</code>",
+            "Example:\n<code>4242424242424242|12|28|123 https://example.com</code>\n\n"
+            "Or use: /chk <code>cc|mm|yy|cvv site_url</code>",
             parse_mode="HTML",
             reply_markup=back_button(),
         )
@@ -292,17 +289,24 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_mass":
         await query.edit_message_text(
             "📋 <b>𝐌𝐚𝐬𝐬 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-            "First, send the <b>site URL</b>:",
+            "Send site URL and cards together:\n"
+            "<code>site_url</code>\n"
+            "<code>cc|mm|yy|cvv</code>\n"
+            "<code>cc|mm|yy|cvv</code>\n...\n\n"
+            "First line = site URL, rest = cards.\n"
+            "Or send a .txt file with cards after the site URL.\n\n"
+            "Or use: /mass <code>site_url</code> (reply to card file)",
             parse_mode="HTML",
             reply_markup=back_button(),
         )
-        context.user_data['awaiting'] = 'mass_site'
+        context.user_data['awaiting'] = 'mass'
         return
 
     if data == "btn_site":
         await query.edit_message_text(
             "🌐 <b>𝐒𝐢𝐭𝐞 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-            "Send the site URL to check:",
+            "Send the site URL to check:\n\n"
+            "Or use: /site <code>url</code>",
             parse_mode="HTML",
             reply_markup=back_button(),
         )
@@ -312,8 +316,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_msite":
         await query.edit_message_text(
             "📡 <b>𝐌𝐚𝐬𝐬 𝐒𝐢𝐭𝐞 𝐂𝐡𝐞𝐜𝐤</b>\n\n"
-            "Send a <b>.txt file</b> with sites (one per line)\n"
-            "or send sites as text lines:",
+            "Send sites (one per line) or a .txt file:\n\n"
+            "Or use: /msite (reply to site file)",
             parse_mode="HTML",
             reply_markup=back_button(),
         )
@@ -323,7 +327,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_bin":
         await query.edit_message_text(
             "🏦 <b>𝐁𝐈𝐍 𝐋𝐨𝐨𝐤𝐮𝐩</b>\n\n"
-            "Send the first 6 digits of a card:",
+            "Send the first 6 digits of a card:\n\n"
+            "Or use: /bin <code>123456</code>",
             parse_mode="HTML",
             reply_markup=back_button(),
         )
@@ -334,11 +339,12 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting'] = None
         await query.edit_message_text(
             "<b>𝐇𝐞𝐥𝐩 ❓</b>\n\n"
-            "🔍 <b>Single Check</b> - Check one card against a site\n"
-            "📋 <b>Mass Check</b> - Check many cards (send site, then .txt file)\n"
-            "🌐 <b>Site Check</b> - Check if a Shopify site is alive\n"
-            "📡 <b>Mass Site</b> - Check many sites at once\n"
-            "🏦 <b>BIN Lookup</b> - Get card BIN information\n\n"
+            "🔍 <b>Single Check</b> — /chk <code>cc|mm|yy|cvv site</code>\n"
+            "📋 <b>Mass Check</b> — /mass <code>site</code> (reply to card file)\n"
+            "🌐 <b>Site Check</b> — /site <code>url</code>\n"
+            "📡 <b>Mass Site</b> — /msite (reply to site file)\n"
+            "🏦 <b>BIN Lookup</b> — /bin <code>123456</code>\n\n"
+            "You can use buttons or commands!\n\n"
             "<b>𝐅𝐨𝐫𝐦𝐚𝐭𝐬:</b>\n"
             "Card: <code>cc_number|mm|yy|cvv</code>\n"
             "Site: <code>https://example.com</code>\n\n"
@@ -349,7 +355,123 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# ─── Text message handler (routes based on awaiting state) ─
+# ─── Slash command handlers ────────────────────────────────
+
+
+async def chk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /chk <code>cc|mm|yy|cvv site_url</code>", parse_mode="HTML"
+        )
+        return
+    text = f"{context.args[0]} {context.args[1]}"
+    await handle_single_check(update, context, text)
+
+
+async def mass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /mass <code>site_url</code> (reply to a .txt file with cards)",
+            parse_mode="HTML",
+        )
+        return
+
+    site = context.args[0]
+    if not site.startswith('http'):
+        site = 'https://' + site
+
+    cards = []
+    if update.message.reply_to_message:
+        if update.message.reply_to_message.document:
+            file = await update.message.reply_to_message.document.get_file()
+            data = await file.download_as_bytearray()
+            cards = [l.strip() for l in data.decode('utf-8', errors='ignore').splitlines() if '|' in l.strip()]
+        elif update.message.reply_to_message.text:
+            cards = [l.strip() for l in update.message.reply_to_message.text.splitlines() if '|' in l]
+
+    if len(context.args) > 1:
+        for arg in context.args[1:]:
+            if '|' in arg:
+                cards.append(arg)
+
+    if not cards:
+        await update.message.reply_text("No cards found. Reply to a file or send cards.")
+        return
+
+    await handle_mass_check(update, context, cards, site)
+
+
+async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /site <code>url</code>", parse_mode="HTML")
+        return
+    await handle_site_check(update, context, context.args[0])
+
+
+async def msite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+
+    sites = []
+    if update.message.reply_to_message:
+        if update.message.reply_to_message.document:
+            file = await update.message.reply_to_message.document.get_file()
+            data = await file.download_as_bytearray()
+            sites = [l.strip() for l in data.decode('utf-8', errors='ignore').splitlines() if l.strip()]
+        elif update.message.reply_to_message.text:
+            sites = [l.strip() for l in update.message.reply_to_message.text.splitlines() if l.strip()]
+
+    if not sites:
+        default_path = os.path.join(os.path.dirname(__file__), 'sites.txt')
+        if os.path.isfile(default_path):
+            with open(default_path, 'r', encoding='utf-8') as f:
+                sites = [l.strip() for l in f if l.strip()]
+
+    if not sites:
+        await update.message.reply_text("No sites found. Reply to a file with /msite")
+        return
+
+    await handle_mass_site(update, context, sites)
+
+
+async def bin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /bin <code>123456</code>", parse_mode="HTML")
+        return
+    await handle_bin_lookup(update, context, context.args[0])
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await deny(update)
+        return
+    text = (
+        "<b>𝐇𝐞𝐥𝐩 ❓</b>\n\n"
+        "🔍 /chk <code>cc|mm|yy|cvv site</code> — Check single card\n"
+        "📋 /mass <code>site</code> — Mass check (reply to card file)\n"
+        "🌐 /site <code>url</code> — Check if site is alive\n"
+        "📡 /msite — Mass site check (reply to file)\n"
+        "🏦 /bin <code>123456</code> — BIN lookup\n"
+        "/start — Show button menu\n\n"
+        "𝐃𝐞𝐯 ➜ @Xoarch"
+    )
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu_keyboard())
+
+
+# ─── Text message handler (for button flow) ────────────────
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -364,24 +486,33 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting'] = None
         await handle_single_check(update, context, text)
 
-    elif awaiting == 'mass_site':
-        site = text if text.startswith('http') else f'https://{text}'
-        context.user_data['mass_site'] = site
-        context.user_data['awaiting'] = 'mass_cards'
-        await update.message.reply_text(
-            f"Site set: <code>{site}</code>\n\n"
-            "Now send a <b>.txt file</b> with cards (one per line)\n"
-            "or paste cards as text lines:",
-            parse_mode="HTML",
-            reply_markup=back_button(),
-        )
+    elif awaiting == 'mass':
+        context.user_data['awaiting'] = None
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if not lines:
+            await update.message.reply_text("No input found.", reply_markup=main_menu_keyboard())
+            return
+        site = lines[0]
+        if not site.startswith('http'):
+            site = 'https://' + site
+        cards = [l for l in lines[1:] if '|' in l]
+        if not cards:
+            context.user_data['mass_site'] = site
+            context.user_data['awaiting'] = 'mass_cards'
+            await update.message.reply_text(
+                f"Site set: <code>{site}</code>\n\n"
+                "Now send cards (one per line) or a .txt file:",
+                parse_mode="HTML", reply_markup=back_button(),
+            )
+            return
+        await handle_mass_check(update, context, cards, site)
 
     elif awaiting == 'mass_cards':
         context.user_data['awaiting'] = None
         cards = [l.strip() for l in text.splitlines() if '|' in l.strip()]
         if not cards:
             await update.message.reply_text(
-                "No valid cards found. Each line should be: <code>cc|mm|yy|cvv</code>",
+                "No valid cards. Format: <code>cc|mm|yy|cvv</code>",
                 parse_mode="HTML", reply_markup=main_menu_keyboard(),
             )
             return
@@ -396,9 +527,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting'] = None
         sites = [l.strip() for l in text.splitlines() if l.strip()]
         if not sites:
-            await update.message.reply_text(
-                "No sites found.", reply_markup=main_menu_keyboard(),
-            )
+            await update.message.reply_text("No sites found.", reply_markup=main_menu_keyboard())
             return
         await handle_mass_site(update, context, sites)
 
@@ -407,9 +536,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_bin_lookup(update, context, text)
 
     else:
-        await update.message.reply_text(
-            "Use the menu buttons 👇", reply_markup=main_menu_keyboard(),
-        )
+        if '|' in text and ' ' in text:
+            await handle_single_check(update, context, text)
+        elif text.replace('.', '').replace('/', '').replace(':', '').replace('-', '').isalnum() and '.' in text:
+            await handle_site_check(update, context, text)
+        else:
+            await update.message.reply_text(
+                "Use /start for button menu 👇\n"
+                "Or type a command directly.",
+                reply_markup=main_menu_keyboard(),
+            )
 
 
 # ─── File handler ──────────────────────────────────────────
@@ -450,13 +586,15 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif '|' in lines[0]:
         await update.message.reply_text(
             f"Detected {len(lines)} cards.\n"
-            "Press 📋 <b>Mass Check</b> to use them.",
+            "Use /mass <code>site_url</code> and reply to this file.\n"
+            "Or press 📋 Mass Check button.",
             parse_mode="HTML", reply_markup=main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
             f"Detected {len(lines)} sites.\n"
-            "Press 📡 <b>Mass Site</b> to use them.",
+            "Use /msite and reply to this file.\n"
+            "Or press 📡 Mass Site button.",
             parse_mode="HTML", reply_markup=main_menu_keyboard(),
         )
 
@@ -673,6 +811,12 @@ async def handle_bin_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 def build_app():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("chk", chk_cmd))
+    app.add_handler(CommandHandler("mass", mass_cmd))
+    app.add_handler(CommandHandler("site", site_cmd))
+    app.add_handler(CommandHandler("msite", msite_cmd))
+    app.add_handler(CommandHandler("bin", bin_cmd))
     app.add_handler(CallbackQueryHandler(button_router))
     app.add_handler(MessageHandler(filters.Document.ALL, file_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))

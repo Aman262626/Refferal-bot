@@ -1,21 +1,24 @@
 import os
-import json
 import asyncio
 import logging
-from flask import Flask, Request, Response, request
+from flask import Flask, Response, request
 from telegram import Update
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
 
 _tg_app = None
+_initialized = False
 
 
-def get_tg_app():
-    global _tg_app
+async def _init_app():
+    global _tg_app, _initialized
     if _tg_app is None:
         from bot import build_app
         _tg_app = build_app()
+    if not _initialized:
+        await _tg_app.initialize()
+        _initialized = True
     return _tg_app
 
 
@@ -26,16 +29,18 @@ def index():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    tg_app = get_tg_app()
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-    update = Update.de_json(request.get_json(force=True), tg_app.bot)
+        tg_app = loop.run_until_complete(_init_app())
+        update = Update.de_json(request.get_json(force=True), tg_app.bot)
+        loop.run_until_complete(tg_app.process_update(update))
 
-    async def process():
-        async with tg_app:
-            await tg_app.process_update(update)
-
-    asyncio.run(process())
-    return Response("ok", status=200)
+        return Response("ok", status=200)
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return Response("error", status=200)
 
 
 @app.route("/setwebhook")
