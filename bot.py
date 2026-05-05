@@ -29,6 +29,10 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "5451167865"))
 
+# ─── Webhook vs Polling mode detection ─────────────────────
+IS_WEBHOOK = bool(os.environ.get('VERCEL') or os.environ.get('WEBHOOK_URL'))
+MAX_BATCH_SECONDS = int(os.environ.get('BATCH_TIMEOUT', '8'))
+
 # ─── Active sessions (user_id → session state) ─────────────
 active_sessions = {}
 
@@ -776,9 +780,12 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['autochk_proxy'] = None
         user_id = update.effective_user.id
         await query.edit_message_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
-        asyncio.create_task(
-            run_continuous_autochk(update, context, user_id, query.message)
-        )
+        if IS_WEBHOOK:
+            await run_continuous_autochk(update, context, user_id, query.message)
+        else:
+            asyncio.create_task(
+                run_continuous_autochk(update, context, user_id, query.message)
+            )
         return
 
     if data == "btn_autohit":
@@ -796,18 +803,49 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Press 🛑 Stop or /stop to halt.",
             parse_mode="HTML",
         )
-        asyncio.create_task(
-            run_autohit(update, context, user_id, query.message)
-        )
+        if IS_WEBHOOK:
+            await run_autohit(update, context, user_id, query.message)
+        else:
+            asyncio.create_task(
+                run_autohit(update, context, user_id, query.message)
+            )
+        return
+
+    if data == "btn_continue_hit":
+        user_id = update.effective_user.id
+        session = active_sessions.get(user_id)
+        if not session:
+            await query.edit_message_text(
+                "❌ Session expired. Start a new Auto Hit.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        session['running'] = True
+        await run_autohit(update, context, user_id, query.message, resume=True)
+        return
+
+    if data == "btn_continue_chk":
+        user_id = update.effective_user.id
+        session = active_sessions.get(user_id)
+        if not session:
+            await query.edit_message_text(
+                "❌ Session expired. Start a new Auto Check.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        session['running'] = True
+        await run_continuous_autochk(update, context, user_id, query.message, resume=True)
         return
 
     if data == "btn_stop":
         user_id = update.effective_user.id
         if user_id in active_sessions:
             active_sessions[user_id]['running'] = False
+            del active_sessions[user_id]
             await query.edit_message_text(
-                "🛑 <b>Stopping session...</b> Please wait.",
+                "🛑 <b>Session stopped.</b>",
                 parse_mode="HTML",
+                reply_markup=main_menu_keyboard(),
             )
         else:
             await query.edit_message_text(
@@ -1004,9 +1042,12 @@ async def autochk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['autochk_proxy'] = None
     user_id = update.effective_user.id
     msg = await update.message.reply_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
-    asyncio.create_task(
-        run_continuous_autochk(update, context, user_id, msg)
-    )
+    if IS_WEBHOOK:
+        await run_continuous_autochk(update, context, user_id, msg)
+    else:
+        asyncio.create_task(
+            run_continuous_autochk(update, context, user_id, msg)
+        )
 
 
 async def autohit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1025,7 +1066,10 @@ async def autohit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "All BINs × All Sites. Press /stop to halt.",
         parse_mode="HTML",
     )
-    asyncio.create_task(run_autohit(update, context, user_id, msg))
+    if IS_WEBHOOK:
+        await run_autohit(update, context, user_id, msg)
+    else:
+        asyncio.create_task(run_autohit(update, context, user_id, msg))
 
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1035,9 +1079,11 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in active_sessions:
         active_sessions[user_id]['running'] = False
+        del active_sessions[user_id]
         await update.message.reply_text(
-            "🛑 <b>Stopping session...</b> Please wait.",
+            "🛑 <b>Session stopped.</b>",
             parse_mode="HTML",
+            reply_markup=main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
@@ -1163,9 +1209,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['autochk_proxy'] = None
         user_id = update.effective_user.id
         msg = await update.message.reply_text("⚡ Starting Auto Check... ⏳", parse_mode="HTML")
-        asyncio.create_task(
-            run_continuous_autochk(update, context, user_id, msg)
-        )
+        if IS_WEBHOOK:
+            await run_continuous_autochk(update, context, user_id, msg)
+        else:
+            asyncio.create_task(
+                run_continuous_autochk(update, context, user_id, msg)
+            )
 
     elif awaiting == 'autochk_search':
         context.user_data['awaiting'] = None
@@ -1229,9 +1278,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['autochk_proxy'] = text.strip()
         user_id = update.effective_user.id
         msg = await update.message.reply_text("⚡ Starting Auto Check with proxy... ⏳", parse_mode="HTML")
-        asyncio.create_task(
-            run_continuous_autochk(update, context, user_id, msg)
-        )
+        if IS_WEBHOOK:
+            await run_continuous_autochk(update, context, user_id, msg)
+        else:
+            asyncio.create_task(
+                run_continuous_autochk(update, context, user_id, msg)
+            )
 
     else:
         if '|' in text and ' ' in text:
@@ -1509,9 +1561,9 @@ async def handle_gen(update: Update, context: ContextTypes.DEFAULT_TYPE, bin_str
     await update.message.reply_text(result, parse_mode="HTML", reply_markup=main_menu_keyboard())
 
 
-async def run_continuous_autochk(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg):
+async def run_continuous_autochk(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg, resume=False):
     try:
-        await _run_autochk_inner(update, context, user_id, status_msg)
+        await _run_autochk_inner(update, context, user_id, status_msg, resume=resume)
     except Exception as e:
         logger.error(f"Auto Check crashed: {e}", exc_info=True)
         if user_id in active_sessions:
@@ -1529,7 +1581,7 @@ async def run_continuous_autochk(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
 
-async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg):
+async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg, resume=False):
     bin_str = context.user_data.get('autochk_bin', '')
     site = context.user_data.get('autochk_site', '')
     proxy_str = context.user_data.get('autochk_proxy', None)
@@ -1550,52 +1602,79 @@ async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     info = await get_bin_info(bin6)
     info_str = fmt_info(info['brand'], info['type'], info['level'])
-
-    session = {
-        'running': True,
-        'stats': {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0},
-        'total': 0,
-        'start_time': time.time(),
-    }
-    active_sessions[user_id] = session
-    rate_limiter.reset()
     chat_id = update.effective_chat.id
+
+    if resume:
+        session = active_sessions.get(user_id)
+        if not session:
+            await _update_status(status_msg,
+                "❌ Session expired. Start a new Auto Check.", stop_btn=False)
+            return
+    else:
+        session = {
+            'running': True,
+            'type': 'autochk',
+            'stats': {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0},
+            'total': 0,
+            'start_time': time.time(),
+        }
+        active_sessions[user_id] = session
+        rate_limiter.reset()
+
+        proxy_label = f"Proxy: {proxy_str}" if proxy_str else "No Proxy"
+        url_info = URLAnalyzer.analyze_url(site)
+        merchant = url_info.get('merchant', 'Unknown')
+        product = url_info.get('product', 'Unknown')
+        url_amount = url_info.get('amount', '')
+        site_details = ""
+        if merchant != 'Unknown':
+            site_details += f"🏢 Merchant: {merchant}\n"
+        if product != 'Unknown':
+            site_details += f"📦 Product: {product}\n"
+        if url_amount:
+            site_details += f"💰 Amount: {url_amount}\n"
+
+        await _update_status(status_msg,
+            f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 — 𝐈𝐍𝐈𝐓𝐈𝐀𝐋𝐈𝐙𝐈𝐍𝐆</b>\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"✅ BIN: <code>{bin_str}</code> | {info_str}\n"
+            f"✅ Site: <code>{site}</code>\n"
+            f"{site_details}"
+            f"🌐 {proxy_label}\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"🧠 AI Learning: Active | ⚡ Smart Rate: Active\n"
+            f"🔒 Anti-Detection: Active | 💳 Enhanced Gen: Active\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"▶️ Starting scan...")
+
+    site_domain = site.split('//')[-1].split('/')[0] if '//' in site else site
+    batch_start = time.time()
     spin_idx = 0
 
-    proxy_label = f"Proxy: {proxy_str}" if proxy_str else "No Proxy"
-
-    # Analyze site for merchant/product info
+    # URL analysis (for hit results)
     url_info = URLAnalyzer.analyze_url(site)
     merchant = url_info.get('merchant', 'Unknown')
     product = url_info.get('product', 'Unknown')
-    url_amount = url_info.get('amount', '')
 
-    site_details = ""
-    if merchant != 'Unknown':
-        site_details += f"🏢 Merchant: {merchant}\n"
-    if product != 'Unknown':
-        site_details += f"📦 Product: {product}\n"
-    if url_amount:
-        site_details += f"💰 Amount: {url_amount}\n"
+    while session.get('running', False):
+        # Webhook batch time limit
+        if IS_WEBHOOK and (time.time() - batch_start > MAX_BATCH_SECONDS):
+            text = _build_status_text(
+                "⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 — 𝐏𝐀𝐔𝐒𝐄𝐃</b>",
+                session,
+                f"📋 BIN: <code>{bin_str}</code> | {info_str}\n"
+                f"🌐 Site: <code>{site}</code>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"⏸ Press ▶️ Continue to resume\n"
+                f"━━━━━━━━━━━━━━\n",
+            )
+            try:
+                await status_msg.edit_text(text, parse_mode="HTML",
+                    reply_markup=_continue_stop_markup("btn_continue_chk"))
+            except Exception:
+                pass
+            return
 
-    # Single init message
-    await _update_status(status_msg,
-        f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 — 𝐈𝐍𝐈𝐓𝐈𝐀𝐋𝐈𝐙𝐈𝐍𝐆</b>\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"✅ BIN: <code>{bin_str}</code> | {info_str}\n"
-        f"✅ Site: <code>{site}</code>\n"
-        f"{site_details}"
-        f"🌐 {proxy_label}\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"🧠 AI Learning: Active | ⚡ Smart Rate: Active\n"
-        f"🔒 Anti-Detection: Active | 💳 Enhanced Gen: Active\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"▶️ Starting scan...")
-
-    site_domain = site.split('//')[-1].split('/')[0] if '//' in site else site
-    last_status_time = time.time()
-
-    while session['running']:
         cards = EnhancedCardGenerator.generate_cards(bin_str, 10)
         if not cards:
             cards = generate_cards_from_bin(bin_str, 10)
@@ -1603,7 +1682,9 @@ async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
             break
 
         for card_idx, cc_string in enumerate(cards):
-            if not session['running']:
+            if not session.get('running', False):
+                break
+            if IS_WEBHOOK and (time.time() - batch_start > MAX_BATCH_SECONDS):
                 break
 
             try:
@@ -1615,32 +1696,29 @@ async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
             cc_masked = parts['cc'][:6] + 'x' * 6 + parts['cc'][-4:]
 
-            # Time-based status update (every 3 seconds)
-            now = time.time()
-            if now - last_status_time >= 3:
-                last_status_time = now
-                spin_idx = (spin_idx + 1) % len(SPIN_FRAMES)
-                spinner = SPIN_FRAMES[spin_idx]
-                elapsed = int(now - session['start_time'])
-                mins, secs = divmod(elapsed, 60)
-                stats = session['stats']
-                ai_merchants, ai_patterns = pattern_learner.get_stats()
-                best_bin, best_rate = pattern_learner.suggest_best_bin(site_domain)
-                ai_hint = f"\n🏆 Best: {best_bin} ({best_rate:.0f}%)" if best_bin else ""
+            # Status update
+            spin_idx = (spin_idx + 1) % len(SPIN_FRAMES)
+            spinner = SPIN_FRAMES[spin_idx]
+            elapsed = int(time.time() - session['start_time'])
+            mins, secs = divmod(elapsed, 60)
+            stats = session['stats']
+            ai_merchants, ai_patterns = pattern_learner.get_stats()
+            best_bin, best_rate = pattern_learner.suggest_best_bin(site_domain)
+            ai_hint = f"\n🏆 Best: {best_bin} ({best_rate:.0f}%)" if best_bin else ""
 
-                await _update_status(status_msg,
-                    f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 — 𝐏𝐑𝐎𝐂𝐄𝐒𝐒𝐈𝐍𝐆 {spinner}</b>\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"📋 BIN: <code>{bin_str}</code> | {info_str}\n"
-                    f"💳 Card {card_idx+1}/{len(cards)}: <code>{cc_masked}</code>\n"
-                    f"🌐 Site: <code>{site}</code>\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"🔍 <b>Checking...</b>\n"
-                    f"{_progress_bar(card_idx, len(cards), 12)} Cards\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"🔥{stats['charged']} ✅{stats['approved']} ❎{stats['tds']} ❌{stats['declined']} ⚠️{stats['error']}\n"
-                    f"📈 Scanned: {session['total']} | ⏱ {mins}m {secs}s\n"
-                    f"🧠 AI: {ai_patterns} patterns | ⚡ {rate_limiter.current_delay:.1f}s{ai_hint}")
+            await _update_status(status_msg,
+                f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 — 𝐏𝐑𝐎𝐂𝐄𝐒𝐒𝐈𝐍𝐆 {spinner}</b>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"📋 BIN: <code>{bin_str}</code> | {info_str}\n"
+                f"💳 Card {card_idx+1}/{len(cards)}: <code>{cc_masked}</code>\n"
+                f"🌐 Site: <code>{site}</code>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🔍 <b>Checking...</b>\n"
+                f"{_progress_bar(card_idx, len(cards), 12)} Cards\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🔥{stats['charged']} ✅{stats['approved']} ❎{stats['tds']} ❌{stats['declined']} ⚠️{stats['error']}\n"
+                f"📈 Scanned: {session['total']} | ⏱ {mins}m {secs}s\n"
+                f"🧠 AI: {ai_patterns} patterns | ⚡ {rate_limiter.current_delay:.1f}s{ai_hint}")
 
             success, message, gateway, price, currency, category = await run_with_retry(
                 parts, site, proxy_str
@@ -1648,11 +1726,8 @@ async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
             session['stats'][category] += 1
             session['total'] += 1
 
-            # AI Pattern Learning
             is_hit = category in ('charged', 'approved', 'tds')
             pattern_learner.learn(bin6, site_domain, is_hit)
-
-            # Smart Rate Limiter
             last_type = 'success' if is_hit else 'declined'
             rate_limiter.calculate_delay(last_type)
 
@@ -1686,35 +1761,8 @@ async def _run_autochk_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 except Exception:
                     pass
 
-        # After batch — show live stats
-        if session['running']:
-            elapsed = int(time.time() - session['start_time'])
-            mins, secs = divmod(elapsed, 60)
-            stats = session['stats']
-            total_hits = stats['charged'] + stats['approved'] + stats['tds']
-            hit_rate = (total_hits / session['total'] * 100) if session['total'] > 0 else 0
-            ai_merchants, ai_patterns = pattern_learner.get_stats()
-            best_bin, best_rate = pattern_learner.suggest_best_bin(site_domain)
-            ai_hint = f"\n🏆 Best BIN: {best_bin} ({best_rate:.0f}% hit)" if best_bin else ""
-
-            await _update_status(status_msg,
-                f"⚡ <b>𝐀𝐔𝐓𝐎 𝐂𝐇𝐄𝐂𝐊 — 𝐋𝐈𝐕𝐄</b>\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"📋 BIN: <code>{bin_str}</code> | {info_str}\n"
-                f"🌐 Site: <code>{site}</code>\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"📊 <b>𝐋𝐈𝐕𝐄 𝐒𝐓𝐀𝐓𝐒</b>\n"
-                f"🔥 Charged: {stats['charged']}  |  ✅ Approved: {stats['approved']}\n"
-                f"❎ 3DS: {stats['tds']}  |  ❌ Declined: {stats['declined']}\n"
-                f"⚠️ Errors: {stats['error']}\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"📈 Total: {session['total']} | Hit Rate: {hit_rate:.1f}%\n"
-                f"⏱ {mins}m {secs}s\n"
-                f"🧠 AI: {ai_merchants} merchants, {ai_patterns} patterns\n"
-                f"⚡ Rate: {rate_limiter.current_delay:.1f}s | 🔒 Anti-Detect: ✅{ai_hint}\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"⏳ Next batch...")
-            last_status_time = time.time()
+        # In polling mode, wait between batches
+        if session.get('running', False) and not IS_WEBHOOK:
             await asyncio.sleep(max(rate_limiter.current_delay, 2))
 
     # Session ended
@@ -1816,9 +1864,9 @@ def _progress_bar(current, total, length=10):
 SPIN_FRAMES = ['◐', '◓', '◑', '◒']
 
 
-async def run_autohit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg):
+async def run_autohit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg, resume=False):
     try:
-        await _run_autohit_inner(update, context, user_id, status_msg)
+        await _run_autohit_inner(update, context, user_id, status_msg, resume=resume)
     except Exception as e:
         logger.error(f"Auto Hit crashed: {e}", exc_info=True)
         if user_id in active_sessions:
@@ -1836,7 +1884,37 @@ async def run_autohit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_i
             pass
 
 
-async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg):
+def _continue_stop_markup(continue_data="btn_continue_hit"):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ 𝐂𝐎𝐍𝐓𝐈𝐍𝐔𝐄", callback_data=continue_data),
+         InlineKeyboardButton("🛑 𝐒𝐓𝐎𝐏", callback_data="btn_stop")]
+    ])
+
+
+def _build_status_text(title, session, extra_lines=""):
+    elapsed = int(time.time() - session['start_time'])
+    mins, secs = divmod(elapsed, 60)
+    stats = session['stats']
+    ai_merchants, ai_patterns = pattern_learner.get_stats()
+    total_hits = stats['charged'] + stats['approved'] + stats['tds']
+    hit_rate = (total_hits / session['total'] * 100) if session['total'] > 0 else 0
+    return (
+        f"{title}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"{extra_lines}"
+        f"📊 <b>𝐋𝐈𝐕𝐄 𝐒𝐓𝐀𝐓𝐒</b>\n"
+        f"🔥 Charged: {stats['charged']}  |  ✅ Approved: {stats['approved']}\n"
+        f"❎ 3DS: {stats['tds']}  |  ❌ Declined: {stats['declined']}\n"
+        f"⚠️ Errors: {stats['error']}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"📈 Total: {session['total']} | Hit Rate: {hit_rate:.1f}%\n"
+        f"⏱ {mins}m {secs}s\n"
+        f"🧠 AI: {ai_merchants} merchants, {ai_patterns} patterns\n"
+        f"⚡ Rate: {rate_limiter.current_delay:.1f}s | 🔒 Anti-Detect: ✅"
+    )
+
+
+async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, status_msg, resume=False):
     sites = await _load_sites()
     if not sites:
         await _update_status(status_msg,
@@ -1848,61 +1926,69 @@ async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "❌ BIN Library is empty. Add BINs first.", stop_btn=False)
         return
 
-    session = {
-        'running': True,
-        'stats': {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0},
-        'total': 0,
-        'bins_used': 0,
-        'sites_count': len(sites),
-        'start_time': time.time(),
-        'phase': '⏳ Initializing...',
-        'current_bin': '',
-        'current_card': '',
-        'card_idx': 0,
-        'card_total': 0,
-    }
-    active_sessions[user_id] = session
-    rate_limiter.reset()
     chat_id = update.effective_chat.id
+
+    if resume:
+        session = active_sessions.get(user_id)
+        if not session:
+            await _update_status(status_msg,
+                "❌ Session expired. Start a new Auto Hit.", stop_btn=False)
+            return
+    else:
+        session = {
+            'running': True,
+            'type': 'autohit',
+            'stats': {'charged': 0, 'approved': 0, 'tds': 0, 'declined': 0, 'error': 0},
+            'total': 0,
+            'bins_used': 0,
+            'sites_count': len(sites),
+            'start_time': time.time(),
+        }
+        active_sessions[user_id] = session
+        rate_limiter.reset()
+        # Init message
+        await _update_status(status_msg,
+            f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 — 𝐈𝐍𝐈𝐓𝐈𝐀𝐋𝐈𝐙𝐈𝐍𝐆</b>\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"✅ BIN Library: {len(BIN_LIBRARY)} BINs\n"
+            f"✅ Sites: {len(sites)} sites\n"
+            f"✅ DLX Engine: Ready\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"🧠 AI Learning: Active | ⚡ Smart Rate: Active\n"
+            f"🔒 Anti-Detection: Active | 💳 Enhanced Gen: Active\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"▶️ Starting scan...")
+
+    batch_start = time.time()
     site_info_cache = {}
     spin_idx = 0
 
-    # Phase 1: Initialization → Engine Ready (single update)
-    await _update_status(status_msg,
-        f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 — 𝐈𝐍𝐈𝐓𝐈𝐀𝐋𝐈𝐙𝐈𝐍𝐆</b>\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"✅ BIN Library: {len(BIN_LIBRARY)} BINs\n"
-        f"✅ Sites: {len(sites)} sites\n"
-        f"✅ DLX Engine: Ready\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"🧠 AI Pattern Learning: Active\n"
-        f"⚡ Smart Rate Limiter: Active\n"
-        f"🔒 Anti-Detection: Active\n"
-        f"💳 Enhanced Card Gen: Active\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"▶️ Starting scan...")
+    while session.get('running', False):
+        # Webhook batch time limit
+        if IS_WEBHOOK and (time.time() - batch_start > MAX_BATCH_SECONDS):
+            text = _build_status_text(
+                "🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 — 𝐏𝐀𝐔𝐒𝐄𝐃</b>",
+                session,
+                f"📚 BINs used: {session['bins_used']}\n"
+                f"🌐 Sites: {len(sites)} per card\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"⏸ Press ▶️ Continue to resume\n"
+                f"━━━━━━━━━━━━━━\n",
+            )
+            try:
+                await status_msg.edit_text(text, parse_mode="HTML",
+                    reply_markup=_continue_stop_markup("btn_continue_hit"))
+            except Exception:
+                pass
+            return  # Return to let webhook respond
 
-    last_status_time = time.time()
-    bin_index = 0
-    shuffled_bins = list(BIN_LIBRARY)
-    random.shuffle(shuffled_bins)
-
-    while session['running']:
-        if bin_index >= len(shuffled_bins):
-            random.shuffle(shuffled_bins)
-            bin_index = 0
-
-        bin_entry = shuffled_bins[bin_index]
-        bin_index += 1
+        bin_entry = random.choice(BIN_LIBRARY)
         bin_str = bin_entry['bin']
         session['bins_used'] += 1
         bin_brand = bin_entry.get('brand', '?')
         bin_country = bin_entry.get('country', '?')
         bin_bank = bin_entry.get('bank', '?')
-        session['current_bin'] = f"{bin_str} ({bin_brand})"
-        session['phase'] = '💳 Generating cards...'
 
-        # Generate cards + fingerprint
         fp = FingerprintGenerator.generate()
         cards = EnhancedCardGenerator.generate_cards(bin_str, 5)
         if not cards:
@@ -1910,10 +1996,11 @@ async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if not cards:
             continue
 
-        session['card_total'] = len(cards)
-
         for card_idx, cc_string in enumerate(cards):
-            if not session['running']:
+            if not session.get('running', False):
+                break
+            # Webhook batch time check inside card loop too
+            if IS_WEBHOOK and (time.time() - batch_start > MAX_BATCH_SECONDS):
                 break
 
             try:
@@ -1925,39 +2012,33 @@ async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
             bin6 = parts['cc'][:6]
             cc_masked = parts['cc'][:6] + 'x' * 6 + parts['cc'][-4:]
-            session['current_card'] = cc_masked
-            session['card_idx'] = card_idx + 1
-            session['phase'] = f"🔍 Card {card_idx+1}/{len(cards)} → {len(sites)} sites"
-
             info = await get_bin_info(bin6)
             info_str = fmt_info(info['brand'], info['type'], info['level'])
 
-            # Time-based status update (every 3 seconds max)
+            # Status update every 3 seconds
             now = time.time()
-            if now - last_status_time >= 3:
-                last_status_time = now
-                spin_idx = (spin_idx + 1) % len(SPIN_FRAMES)
-                spinner = SPIN_FRAMES[spin_idx]
-                elapsed = int(now - session['start_time'])
-                mins, secs = divmod(elapsed, 60)
-                stats = session['stats']
-                ai_merchants, ai_patterns = pattern_learner.get_stats()
+            spin_idx = (spin_idx + 1) % len(SPIN_FRAMES)
+            spinner = SPIN_FRAMES[spin_idx]
+            elapsed = int(now - session['start_time'])
+            mins, secs = divmod(elapsed, 60)
+            stats = session['stats']
+            ai_merchants, ai_patterns = pattern_learner.get_stats()
 
-                await _update_status(status_msg,
-                    f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 — 𝐏𝐑𝐎𝐂𝐄𝐒𝐒𝐈𝐍𝐆 {spinner}</b>\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"📋 BIN: <code>{bin_str}</code> | {bin_brand}\n"
-                    f"🏦 {bin_bank[:25]} | 🌍 {bin_country}\n"
-                    f"💳 Card {card_idx+1}/{len(cards)}: <code>{cc_masked}</code>\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"🔍 <b>Checking {len(sites)} sites...</b>\n"
-                    f"{_progress_bar(card_idx, len(cards), 12)} Cards\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"🔥{stats['charged']} ✅{stats['approved']} ❎{stats['tds']} ❌{stats['declined']} ⚠️{stats['error']}\n"
-                    f"📈 Scanned: {session['total']} | BINs: {session['bins_used']}\n"
-                    f"⏱ {mins}m {secs}s\n"
-                    f"🧠 AI: {ai_patterns} patterns | ⚡ {rate_limiter.current_delay:.1f}s\n"
-                    f"🔒 Anti-Detect: Active")
+            await _update_status(status_msg,
+                f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 — 𝐏𝐑𝐎𝐂𝐄𝐒𝐒𝐈𝐍𝐆 {spinner}</b>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"📋 BIN: <code>{bin_str}</code> | {bin_brand}\n"
+                f"🏦 {bin_bank[:25]} | 🌍 {bin_country}\n"
+                f"💳 Card {card_idx+1}/{len(cards)}: <code>{cc_masked}</code>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🔍 <b>Checking {len(sites)} sites...</b>\n"
+                f"{_progress_bar(card_idx, len(cards), 12)} Cards\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🔥{stats['charged']} ✅{stats['approved']} ❎{stats['tds']} ❌{stats['declined']} ⚠️{stats['error']}\n"
+                f"📈 Scanned: {session['total']} | BINs: {session['bins_used']}\n"
+                f"⏱ {mins}m {secs}s\n"
+                f"🧠 AI: {ai_patterns} patterns | ⚡ {rate_limiter.current_delay:.1f}s\n"
+                f"🔒 Anti-Detect: Active")
 
             # Run parallel checks on all sites
             tasks = [_check_card_on_site(parts, s) for s in sites]
@@ -1965,7 +2046,7 @@ async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
             last_result_type = 'declined'
             for res in results:
-                if not session['running']:
+                if not session.get('running', False):
                     break
                 if isinstance(res, Exception):
                     session['stats']['error'] += 1
@@ -2033,41 +2114,11 @@ async def _run_autohit_inner(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     except Exception:
                         pass
 
-            # Smart Rate Limiter — adaptive delay
-            smart_delay = rate_limiter.calculate_delay(last_result_type)
+            rate_limiter.calculate_delay(last_result_type)
+            if session.get('running', False) and not IS_WEBHOOK:
+                await asyncio.sleep(max(rate_limiter.current_delay, random.uniform(3, 5)))
 
-            if session['running']:
-                await asyncio.sleep(max(smart_delay, random.uniform(3, 5)))
-
-        # After all cards in this BIN — show batch summary
-        if session['running']:
-            elapsed = int(time.time() - session['start_time'])
-            mins, secs = divmod(elapsed, 60)
-            stats = session['stats']
-            ai_merchants, ai_patterns = pattern_learner.get_stats()
-            total_hits = stats['charged'] + stats['approved'] + stats['tds']
-            hit_rate = (total_hits / session['total'] * 100) if session['total'] > 0 else 0
-
-            await _update_status(status_msg,
-                f"🔥 <b>𝐀𝐔𝐓𝐎 𝐇𝐈𝐓 — 𝐋𝐈𝐕𝐄</b>\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"✅ BIN done: <code>{bin_str}</code> | {bin_brand}\n"
-                f"🌐 {len(sites)} sites checked per card\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"📊 <b>𝐋𝐈𝐕𝐄 𝐒𝐓𝐀𝐓𝐒</b>\n"
-                f"🔥 Charged: {stats['charged']}  |  ✅ Approved: {stats['approved']}\n"
-                f"❎ 3DS: {stats['tds']}  |  ❌ Declined: {stats['declined']}\n"
-                f"⚠️ Errors: {stats['error']}\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"📈 Total: {session['total']} | BINs: {session['bins_used']}\n"
-                f"📊 Hit Rate: {hit_rate:.1f}% | ⏱ {mins}m {secs}s\n"
-                f"🧠 AI: {ai_merchants} merchants, {ai_patterns} patterns\n"
-                f"⚡ Rate: {rate_limiter.current_delay:.1f}s | 🔒 Anti-Detect: ✅\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"⏳ Next BIN loading...")
-            last_status_time = time.time()
-
-    # Session ended
+    # Session ended (only if not paused for webhook)
     if user_id in active_sessions:
         del active_sessions[user_id]
 
